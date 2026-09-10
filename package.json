@@ -20,6 +20,7 @@
     "@lancedb/lancedb": "^0.38.0",
     "@langchain/core": "^1.2.10",
     "@langchain/google-genai": "^2.3.1",
+    "apache-arrow": "^21.2.0",
     "gpt-tokenizer": "^4.0.0",
     "langchain": "^1.5.11",
     "mammoth": "^1.12.2",
