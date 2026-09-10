@@ -1,0 +1,48 @@
+{
+  "name": "gb-chatbot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "check-models": "tsx scripts/check-models.ts",
+    "seed": "tsx scripts/seed.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "verify:parse": "tsx scripts/verify-parse.ts",
+    "verify:headings": "tsx scripts/verify-headings.ts",
+    "verify:chunk": "tsx scripts/verify-chunk.ts",
+    "verify:store": "tsx scripts/verify-store.ts",
+    "verify:retrieve": "tsx scripts/verify-retrieve.ts"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.38.0",
+    "@langchain/core": "^1.2.10",
+    "@langchain/google-genai": "^2.3.1",
+    "gpt-tokenizer": "^4.0.0",
+    "langchain": "^1.5.11",
+    "mammoth": "^1.12.2",
+    "nanoid": "^5.1.16",
+    "next": "16.3.4",
+    "p-limit": "^7.3.2",
+    "pdf-parse": "^2.4.5",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "turndown": "^7.2.4",
+    "unzipper": "^0.12.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/turndown": "^5.0.6",
+    "@types/unzipper": "^0.10.11",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.4",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.13",
+    "typescript": "^5"
+  }
+}

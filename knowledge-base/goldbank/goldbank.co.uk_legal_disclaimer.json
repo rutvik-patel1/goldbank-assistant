@@ -1,0 +1,25 @@
+{
+  "markdown": "# Copyright and Trademark Notices\n\nThe information, text, graphics, and materials contained on this website are protected by copyright under applicable national laws and international treaties. The content of this site may be viewed for personal use only but may not be permanently stored, reproduced, or distributed without prior written permission from\n**us**\n\nAny electronic links to this website require the prior written consent. Requests for permission should be submitted to the company through the contact details provided above.\n\nEvery effort has been made to ensure the accuracy of the information contained on this website and any associated links. However, due to the nature of the internet and the possibility of interruption or technical issues, **GBL International Ltd does not accept liability for any loss or damage arising from the use of this website or reliance on the information provided.** All information on this website is subject to change without prior notice.\n\nNothing contained on this website constitutes, or shall be deemed to constitute, financial advice, investment advice, or an invitation to invest in gold, precious metals, or any other financial instrument offered by **GBL**\n**International Ltd**\n\nThe name **“Gold Bank”,** its logo, and associated branding are trademarks and are protected by trademark registration in the United Kingdom and other jurisdictions.\n\n**GBL International Ltd** does not endorse and accepts no responsibility for the content of any external websites linked from this website.\nIf you experience any technical issues while using this website, please contact:\n\n[support@goldbank.co.uk](mailto:support@goldbank.co.uk)\n\nreCAPTCHA\n\nRecaptcha requires verification.\n\nprotected by **reCAPTCHA**",
+  "metadata": {
+    "description": "",
+    "msapplication-TileColor": "#ffffff",
+    "csrf_token": "83jypxB4yZAu7xJHO8whLfj6ugMVVLXS9Mf6m0Pa",
+    "viewport": "width=device-width, initial-scale=1, shrink-to-fit=no",
+    "language": "en",
+    "msapplication-TileImage": "/ms-icon-144x144.png",
+    "title": "Gold Bank - London",
+    "theme-color": "#ffffff",
+    "favicon": "https://goldbank.co.uk/fav/android-icon-192x192.png",
+    "scrapeId": "01a05e17-18a3-719e-b16d-5220fe49d395",
+    "sourceURL": "https://goldbank.co.uk/legal/disclaimer",
+    "url": "https://goldbank.co.uk/legal/disclaimer",
+    "statusCode": 200,
+    "contentType": "text/html; charset=UTF-8",
+    "timezone": "America/New_York",
+    "proxyUsed": "basic",
+    "cacheState": "miss",
+    "indexId": "9d5a459b-a565-4ddb-a171-630f36cddc7e",
+    "creditsUsed": 1
+  },
+  "warning": "This scrape job was throttled at your current concurrency limit. If you'd like to scrape faster, you can upgrade your plan."
+}
