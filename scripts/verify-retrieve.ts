@@ -4,12 +4,18 @@ import { buildContext } from '../lib/rag/context';
 import { config } from '../lib/config';
 import type { ChatTurn } from '../lib/types';
 
+// expectDoc must match the titles the pipeline actually stores, which come from
+// each document's own h1 (see deriveTitle in lib/loaders/scraped-json.ts):
+//   Frequently Asked Questions · Cookies Policy · Delivery Options ·
+//   Privacy Policy · Returns & Cancellations Policy · Terms of Service ·
+//   Terms and conditions · Modern Slavery Statement · Copyright and Trademark Notices
+// Note the FAQ page's h1 is "Frequently Asked Questions" and contains no "FAQ".
 const CASES: { q: string; expectDoc: RegExp }[] = [
-  { q: 'How do I earn points when I sell gold to you?', expectDoc: /FAQ/i },
-  { q: 'Do you deliver outside the UK?',                expectDoc: /FAQ|Delivery/i },
-  { q: 'What happens if I cancel my order?',            expectDoc: /FAQ|Terms|Returns/i },
-  { q: 'Can I get my money back on a purchase?',        expectDoc: /Returns|Terms|FAQ/i },
-  { q: 'What cookies does the site set?',               expectDoc: /Cookie/i },
+  { q: 'How do I earn points when I sell gold to you?', expectDoc: /Frequently Asked/i },
+  { q: 'Do you deliver outside the UK?',                expectDoc: /Frequently Asked|Delivery/i },
+  { q: 'What happens if I cancel my order?',            expectDoc: /Frequently Asked|Terms|Returns/i },
+  { q: 'Can I get my money back on a purchase?',        expectDoc: /Returns|Terms|Frequently Asked/i },
+  { q: 'What cookies does the site set?',               expectDoc: /Cookies/i },
 ];
 
 async function main() {
