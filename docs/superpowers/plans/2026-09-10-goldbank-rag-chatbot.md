@@ -189,6 +189,8 @@ export const config = {
   // Enrichment
   ENRICHMENT: (process.env.ENRICHMENT ?? 'on') as 'on' | 'off',
   ENRICH_CONCURRENCY: int('ENRICH_CONCURRENCY', 4),
+  ENRICH_MAX_CHARS: int('ENRICH_MAX_CHARS', 6000),
+  ENRICH_MAX_RETRIES: int('ENRICH_MAX_RETRIES', 5),
 
   // Embedding
   EMBED_BATCH_SIZE: int('EMBED_BATCH_SIZE', 64),
@@ -286,6 +288,8 @@ export interface DocumentRecord {
   contentHash: string;
   status: DocumentStatus;
   chunkCount: number;
+  /** How many chunks carry enrichment. Below chunkCount means degraded retrieval. */
+  enrichedCount: number;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -328,6 +332,7 @@ The truncate-and-normalize helper matters: `gemini-embedding-001` natively retur
 ```ts
 import { ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings } from '@langchain/google-genai';
 import { config } from './config';
+
 
 export function requireApiKey(): string {
   const key = process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY;
@@ -394,8 +399,28 @@ export function textOf(content: unknown): string {
   return '';
 }
 
+/** Rate-limit detection shared by every retrying caller. */
+export function isRateLimit(e: unknown): boolean {
+  const msg = (e as Error)?.message ?? '';
+  return /429|rate limit|rate_limit|quota|RESOURCE_EXHAUSTED|too many requests/i.test(msg);
+}
+
 export async function embedTexts(texts: string[]): Promise<number[][]> {
   const raw = await getEmbeddings().embedDocuments(texts);
+
+  // @langchain/google-genai swallows 429s from batchEmbedContents and returns
+  // EMPTY vectors rather than throwing. Left alone, conform() then reports a
+  // bogus "returned 0 dims" dimension mismatch, isRateLimit() does not match it,
+  // and the retry path never engages — so a transient rate limit permanently
+  // fails a document. Detect the shape here and raise a recognizable error.
+  const empty = raw.filter((v) => !v || v.length === 0).length;
+  if (raw.length !== texts.length || empty > 0) {
+    throw new Error(
+      `RESOURCE_EXHAUSTED: embedding provider returned ${empty}/${texts.length} ` +
+      `empty vectors (expected ${texts.length} of ${config.EMBEDDING_DIMENSIONS} dims) — ` +
+      `treating as a rate limit`,
+    );
+  }
   return raw.map(conform);
 }
 
@@ -2048,7 +2073,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import pLimit from 'p-limit';
 import { config, paths } from '../config';
-import { getChatModel, textOf } from '../gemini';
+import { getChatModel, isRateLimit, textOf } from '../gemini';
 import type { Chunk, Enrichment } from '../types';
 
 const PROMPT = `You are indexing a passage from a UK gold bullion dealer's website so that customer questions can find it.
@@ -2091,12 +2116,25 @@ async function writeCache(key: string, value: Enrichment): Promise<void> {
   await writeFile(join(paths.enrichCache, `${key}.json`), JSON.stringify(value));
 }
 
+const EMPTY_ENRICHMENT: Enrichment = { summary: '', hypotheticalQuestions: [], keywords: [] };
+
+/**
+ * Model output is untrusted. This never throws: a fenced response, prose around
+ * the JSON, a truncated object, or wrongly-typed fields all degrade to empty
+ * values rather than propagating. `enrichOne` also catches, but relying on the
+ * caller would make this unsafe to reuse anywhere else.
+ */
 function parseEnrichment(raw: string): Enrichment {
   const cleaned = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
-  if (start < 0 || end < 0) throw new Error('no JSON object in model output');
-  const obj = JSON.parse(cleaned.slice(start, end + 1)) as Partial<Enrichment>;
+  if (start < 0 || end < 0) return EMPTY_ENRICHMENT;
+  let obj: Partial<Enrichment>;
+  try {
+    obj = JSON.parse(cleaned.slice(start, end + 1)) as Partial<Enrichment>;
+  } catch {
+    return EMPTY_ENRICHMENT;
+  }
   return {
     summary: typeof obj.summary === 'string' ? obj.summary : '',
     hypotheticalQuestions: Array.isArray(obj.hypotheticalQuestions)
@@ -2115,17 +2153,26 @@ async function enrichOne(chunk: Chunk): Promise<Enrichment | undefined> {
 
   const prompt = PROMPT
     .replace('{{HEADING}}', chunk.headingPath.join(' › '))
-    .replace('{{TEXT}}', chunk.text.slice(0, 6000));
+    .replace('{{TEXT}}', chunk.text.slice(0, config.ENRICH_MAX_CHARS));
 
-  try {
-    const res = await getChatModel(0).invoke(prompt);
-    const text = textOf(res.content);
-    const parsed = parseEnrichment(text);
-    await writeCache(key, parsed);
-    return parsed;
-  } catch (e) {
-    console.warn(`enrichment failed for ${chunk.id}: ${(e as Error).message}`);
-    return undefined;
+  // Retry rate limits. Without this, a transient 429 on a free-tier key drops a
+  // chunk's enrichment, the chunk is embedded WITHOUT it, and the content hash is
+  // unchanged — so every later seed skips the document and the degraded vector
+  // persists forever with no error. Silent, permanent quality loss.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await getChatModel(0).invoke(prompt);
+      const parsed = parseEnrichment(textOf(res.content));
+      await writeCache(key, parsed);
+      return parsed;
+    } catch (e) {
+      if (!isRateLimit(e) || attempt >= config.ENRICH_MAX_RETRIES) {
+        console.warn(`enrichment failed for ${chunk.id}: ${(e as Error).message}`);
+        return undefined;
+      }
+      const wait = Math.min(30_000, 1000 * 2 ** attempt) + Math.random() * 500;
+      await new Promise((r) => setTimeout(r, wait));
+    }
   }
 }
 
@@ -2223,14 +2270,9 @@ git commit -m "feat: per-chunk LLM enrichment with content-hash disk cache"
 ```ts
 import pLimit from 'p-limit';
 import { config } from '../config';
-import { embedTexts } from '../gemini';
+import { embedTexts, isRateLimit } from '../gemini';
 import type { Chunk, EmbeddedChunk } from '../types';
 import { embeddingText } from './chunk';
-
-function isRateLimit(e: unknown): boolean {
-  const msg = (e as Error)?.message ?? '';
-  return /429|rate|quota|RESOURCE_EXHAUSTED/i.test(msg);
-}
 
 async function embedBatchWithRetry(texts: string[]): Promise<number[][]> {
   let attempt = 0;
@@ -2377,13 +2419,14 @@ export interface IngestResult {
 async function ingestDoc(
   doc: ParsedDoc,
   emit: (e: IngestEvent) => void,
+  force = false,
 ): Promise<IngestResult> {
   const started = Date.now();
   const hash = contentHash(doc.markdown);
   const title = String(doc.metadata.title);
   const filename = String(doc.metadata.filename);
 
-  const identical = await findByHash(hash);
+  const identical = force ? undefined : await findByHash(hash);
   if (identical && identical.status === 'ready') {
     emit({ type: 'skipped', documentId: identical.id, reason: 'already indexed (identical content)' });
     return { documentId: identical.id, chunks: identical.chunkCount, skipped: 'already indexed' };
@@ -2404,7 +2447,7 @@ async function ingestDoc(
   const record: DocumentRecord = {
     id: documentId, filename, title,
     sourceUrl: doc.metadata.sourceUrl, contentHash: hash,
-    status: 'parsing', chunkCount: 0, createdAt: now, updatedAt: now,
+    status: 'parsing', chunkCount: 0, enrichedCount: 0, createdAt: now, updatedAt: now,
   };
   await upsertDocument(record);
 
@@ -2420,6 +2463,7 @@ async function ingestDoc(
     const enriched = await enrichChunks(chunks, (done, total) =>
       emit({ type: 'status', documentId, stage: 'enriching', done, total }),
     );
+    const enrichedCount = enriched.filter((c) => c.enrichment).length;
 
     emit({ type: 'status', documentId, stage: 'embedding', done: 0, total: chunks.length });
     await patchDocument(documentId, { status: 'embedding' });
@@ -2428,7 +2472,9 @@ async function ingestDoc(
     );
 
     await store.upsert(embedded);
-    await patchDocument(documentId, { status: 'ready', chunkCount: embedded.length, error: undefined });
+    await patchDocument(documentId, {
+      status: 'ready', chunkCount: embedded.length, enrichedCount, error: undefined,
+    });
     const ms = Date.now() - started;
     emit({ type: 'done', documentId, chunks: embedded.length, ms });
     return { documentId, chunks: embedded.length };
@@ -2445,6 +2491,7 @@ export async function ingestBuffer(
   buf: Buffer,
   filename: string,
   emit: (e: IngestEvent) => void,
+  opts: { force?: boolean } = {},
 ): Promise<IngestResult[]> {
   let docs: ParsedDoc[];
   try {
@@ -2457,7 +2504,7 @@ export async function ingestBuffer(
 
   const results: IngestResult[] = [];
   for (const doc of docs) {
-    results.push(await ingestDoc(doc, emit));
+    results.push(await ingestDoc(doc, emit, opts.force ?? false));
   }
   return results;
 }
@@ -2483,7 +2530,9 @@ async function filesToIngest(target: string): Promise<[string, Buffer][]> {
 }
 
 async function main() {
-  const target = process.argv[2] ?? paths.corpus;
+  const args = process.argv.slice(2);
+  const force = args.includes('--force');
+  const target = args.find((a) => !a.startsWith('--')) ?? paths.corpus;
   console.log(`seeding from: ${target}`);
   console.log(`store: ${config.VECTOR_STORE}  model: ${config.CHAT_MODEL}  ` +
               `embeddings: ${config.EMBEDDING_MODEL}@${config.EMBEDDING_DIMENSIONS}  ` +
@@ -2508,7 +2557,7 @@ async function main() {
         console.log(`\r  ${name}: FAILED — ${e.message}`);
       }
     };
-    for (const r of await ingestBuffer(buf, name, emit)) {
+    for (const r of await ingestBuffer(buf, name, emit, { force })) {
       // A page the loaders deliberately reject (e.g. a scraped 404) is refused
       // input, not a broken pipeline — it must not fail the seed run.
       if (r.error && /error page|HTTP 4\d\d/i.test(r.error)) refusedCount++;
@@ -2521,6 +2570,22 @@ async function main() {
   const store = await getStore();
   const docs = await listDocuments();
   console.log(`\nindexed ${ok} document(s), skipped ${skipped}, refused ${refusedCount}, failed ${failed}`);
+
+  // Enrichment coverage below 100% means some chunks were embedded without their
+  // hypothetical questions — retrieval still works but is measurably worse, and a
+  // plain re-run will SKIP them on content hash. Say so, and say how to repair it.
+  const ready = docs.filter((d) => d.status === 'ready');
+  const chunkTotal = ready.reduce((n, d) => n + d.chunkCount, 0);
+  const enrichedTotal = ready.reduce((n, d) => n + (d.enrichedCount ?? 0), 0);
+  const pct = chunkTotal ? Math.round((100 * enrichedTotal) / chunkTotal) : 100;
+  console.log(`enrichment coverage: ${enrichedTotal}/${chunkTotal} chunks (${pct}%)`);
+  if (config.ENRICHMENT === 'on' && enrichedTotal < chunkTotal) {
+    for (const d of ready.filter((x) => (x.enrichedCount ?? 0) < x.chunkCount)) {
+      console.log(`  WARNING ${d.title}: ${d.chunkCount - (d.enrichedCount ?? 0)} chunk(s) unenriched`);
+    }
+    console.log('  The enrichment cache is now warm. Re-run with --force to re-embed them:');
+    console.log('    npm run seed -- --force');
+  }
   console.log(`manifest: ${docs.length} record(s), ${docs.filter((d) => d.status === 'ready').length} ready`);
   console.log(`vectors in store: ${await store.count()}`);
   if (failed > 0) process.exit(1);
