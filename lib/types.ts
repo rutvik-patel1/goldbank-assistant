@@ -53,6 +53,7 @@ export interface DocumentRecord {
   contentHash: string;
   status: DocumentStatus;
   chunkCount: number;
+  enrichedCount: number;
   error?: string;
   createdAt: string;
   updatedAt: string;

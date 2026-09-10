@@ -1,13 +1,8 @@
 import pLimit from 'p-limit';
 import { config } from '../config';
-import { embedTexts } from '../gemini';
+import { embedTexts, isRateLimit } from '../gemini';
 import type { Chunk, EmbeddedChunk } from '../types';
 import { embeddingText } from './chunk';
-
-function isRateLimit(e: unknown): boolean {
-  const msg = (e as Error)?.message ?? '';
-  return /429|rate|quota|RESOURCE_EXHAUSTED/i.test(msg);
-}
 
 async function embedBatchWithRetry(texts: string[]): Promise<number[][]> {
   let attempt = 0;

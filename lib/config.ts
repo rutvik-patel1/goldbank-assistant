@@ -30,6 +30,8 @@ export const config = {
   // Enrichment
   ENRICHMENT: (process.env.ENRICHMENT ?? 'on') as 'on' | 'off',
   ENRICH_CONCURRENCY: int('ENRICH_CONCURRENCY', 4),
+  ENRICH_MAX_RETRIES: int('ENRICH_MAX_RETRIES', 5),
+  ENRICH_MAX_CHARS: int('ENRICH_MAX_CHARS', 6000),
 
   // Embedding
   EMBED_BATCH_SIZE: int('EMBED_BATCH_SIZE', 64),

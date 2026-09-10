@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import pLimit from 'p-limit';
 import { config, paths } from '../config';
-import { getChatModel, textOf } from '../gemini';
+import { getChatModel, isRateLimit, textOf } from '../gemini';
 import type { Chunk, Enrichment } from '../types';
 
 const PROMPT = `You are indexing a passage from a UK gold bullion dealer's website so that customer questions can find it.
@@ -46,12 +46,25 @@ async function writeCache(key: string, value: Enrichment): Promise<void> {
   await writeFile(join(paths.enrichCache, `${key}.json`), JSON.stringify(value));
 }
 
+const EMPTY_ENRICHMENT: Enrichment = { summary: '', hypotheticalQuestions: [], keywords: [] };
+
+/**
+ * Model output is untrusted. This never throws: a fenced response, prose around
+ * the JSON, a truncated object, or wrongly-typed fields all degrade to empty
+ * values rather than propagating. `enrichOne` also catches, but relying on the
+ * caller would make this unsafe to reuse anywhere else.
+ */
 function parseEnrichment(raw: string): Enrichment {
   const cleaned = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
-  if (start < 0 || end < 0) throw new Error('no JSON object in model output');
-  const obj = JSON.parse(cleaned.slice(start, end + 1)) as Partial<Enrichment>;
+  if (start < 0 || end < 0) return EMPTY_ENRICHMENT;
+  let obj: Partial<Enrichment>;
+  try {
+    obj = JSON.parse(cleaned.slice(start, end + 1)) as Partial<Enrichment>;
+  } catch {
+    return EMPTY_ENRICHMENT;
+  }
   return {
     summary: typeof obj.summary === 'string' ? obj.summary : '',
     hypotheticalQuestions: Array.isArray(obj.hypotheticalQuestions)
@@ -70,17 +83,26 @@ async function enrichOne(chunk: Chunk): Promise<Enrichment | undefined> {
 
   const prompt = PROMPT
     .replace('{{HEADING}}', chunk.headingPath.join(' › '))
-    .replace('{{TEXT}}', chunk.text.slice(0, 6000));
+    .replace('{{TEXT}}', chunk.text.slice(0, config.ENRICH_MAX_CHARS));
 
-  try {
-    const res = await getChatModel(0).invoke(prompt);
-    const text = textOf(res.content);
-    const parsed = parseEnrichment(text);
-    await writeCache(key, parsed);
-    return parsed;
-  } catch (e) {
-    console.warn(`enrichment failed for ${chunk.id}: ${(e as Error).message}`);
-    return undefined;
+  // Retry rate limits. Without this, a transient 429 on a free-tier key drops a
+  // chunk's enrichment, the chunk is embedded WITHOUT it, and the content hash is
+  // unchanged — so every later seed skips the document and the degraded vector
+  // persists forever with no error. Silent, permanent quality loss.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await getChatModel(0).invoke(prompt);
+      const parsed = parseEnrichment(textOf(res.content));
+      await writeCache(key, parsed);
+      return parsed;
+    } catch (e) {
+      if (!isRateLimit(e) || attempt >= config.ENRICH_MAX_RETRIES) {
+        console.warn(`enrichment failed for ${chunk.id}: ${(e as Error).message}`);
+        return undefined;
+      }
+      const wait = Math.min(30_000, 1000 * 2 ** attempt) + Math.random() * 500;
+      await new Promise((r) => setTimeout(r, wait));
+    }
   }
 }
 

@@ -37,6 +37,15 @@ export function getEmbeddings(): GoogleGenerativeAIEmbeddings {
   return embeddings;
 }
 
+/**
+ * Detects rate-limit-shaped errors from any Gemini call site (chat or
+ * embedding) so retry logic has exactly one definition to agree on.
+ */
+export function isRateLimit(e: unknown): boolean {
+  const msg = (e as Error)?.message ?? '';
+  return /429|rate limit|too many requests|quota|RESOURCE_EXHAUSTED/i.test(msg);
+}
+
 /** Truncate to the configured dimensionality and L2-normalize. */
 export function conform(vector: number[]): number[] {
   const d = config.EMBEDDING_DIMENSIONS;
@@ -68,6 +77,20 @@ export function textOf(content: unknown): string {
 
 export async function embedTexts(texts: string[]): Promise<number[][]> {
   const raw = await getEmbeddings().embedDocuments(texts);
+  // @langchain/google-genai's embedDocuments() swallows a per-batch rate-limit
+  // rejection internally (Promise.allSettled) and substitutes an empty vector
+  // for every text in that batch instead of throwing. Left alone, conform()
+  // would report that as a generic dimension mismatch — a message isRateLimit()
+  // doesn't recognize — so the retry path in embed.ts would never fire and a
+  // transient 429 would silently and permanently degrade the index. Detect the
+  // empty-vector shape here and raise it as the rate limit it actually is.
+  const emptyCount = raw.filter((v) => v.length === 0).length;
+  if (emptyCount > 0) {
+    throw new Error(
+      `RESOURCE_EXHAUSTED: embedding provider returned ${emptyCount} empty vector(s) ` +
+      `of ${raw.length} requested — likely a rate limit swallowed by the client library`,
+    );
+  }
   return raw.map(conform);
 }
 

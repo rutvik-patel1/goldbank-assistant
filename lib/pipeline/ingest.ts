@@ -26,13 +26,14 @@ export interface IngestResult {
 async function ingestDoc(
   doc: ParsedDoc,
   emit: (e: IngestEvent) => void,
+  force = false,
 ): Promise<IngestResult> {
   const started = Date.now();
   const hash = contentHash(doc.markdown);
   const title = String(doc.metadata.title);
   const filename = String(doc.metadata.filename);
 
-  const identical = await findByHash(hash);
+  const identical = force ? undefined : await findByHash(hash);
   if (identical && identical.status === 'ready') {
     emit({ type: 'skipped', documentId: identical.id, reason: 'already indexed (identical content)' });
     return { documentId: identical.id, chunks: identical.chunkCount, skipped: 'already indexed' };
@@ -53,7 +54,7 @@ async function ingestDoc(
   const record: DocumentRecord = {
     id: documentId, filename, title,
     sourceUrl: doc.metadata.sourceUrl, contentHash: hash,
-    status: 'parsing', chunkCount: 0, createdAt: now, updatedAt: now,
+    status: 'parsing', chunkCount: 0, enrichedCount: 0, createdAt: now, updatedAt: now,
   };
   await upsertDocument(record);
 
@@ -69,6 +70,7 @@ async function ingestDoc(
     const enriched = await enrichChunks(chunks, (done, total) =>
       emit({ type: 'status', documentId, stage: 'enriching', done, total }),
     );
+    const enrichedCount = enriched.filter((c) => c.enrichment).length;
 
     emit({ type: 'status', documentId, stage: 'embedding', done: 0, total: chunks.length });
     await patchDocument(documentId, { status: 'embedding' });
@@ -77,7 +79,9 @@ async function ingestDoc(
     );
 
     await store.upsert(embedded);
-    await patchDocument(documentId, { status: 'ready', chunkCount: embedded.length, error: undefined });
+    await patchDocument(documentId, {
+      status: 'ready', chunkCount: embedded.length, enrichedCount, error: undefined,
+    });
     const ms = Date.now() - started;
     emit({ type: 'done', documentId, chunks: embedded.length, ms });
     return { documentId, chunks: embedded.length };
@@ -94,6 +98,7 @@ export async function ingestBuffer(
   buf: Buffer,
   filename: string,
   emit: (e: IngestEvent) => void,
+  opts: { force?: boolean } = {},
 ): Promise<IngestResult[]> {
   let docs: ParsedDoc[];
   try {
@@ -106,7 +111,7 @@ export async function ingestBuffer(
 
   const results: IngestResult[] = [];
   for (const doc of docs) {
-    results.push(await ingestDoc(doc, emit));
+    results.push(await ingestDoc(doc, emit, opts.force ?? false));
   }
   return results;
 }
