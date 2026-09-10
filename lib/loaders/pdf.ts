@@ -1,38 +1,50 @@
 import type { ParsedDoc } from '../../lib/types';
 
-type PdfFn = (data: Buffer) => Promise<{ text: string; numpages: number; info?: Record<string, unknown> }>;
-
-async function resolvePdf(): Promise<PdfFn> {
-  const mod = (await import('pdf-parse')) as unknown as Record<string, unknown>;
-  const fn = (mod.default ?? mod.pdf ?? mod) as unknown;
-  if (typeof fn !== 'function') throw new Error('Could not resolve the pdf-parse entry point');
-  return fn as PdfFn;
-}
+/**
+ * pdf-parse v2 exposes a class, not a function: `new PDFParse({data}).getText()`
+ * resolves to `{ pages, text, total }`. It also injects `-- n of m --` page
+ * separators into `text`, which must be stripped before the text is measured or
+ * indexed, or an image-only PDF's separator noise would pass the emptiness guard.
+ */
+const PAGE_SEPARATOR = /^\s*--\s*\d+\s+of\s+\d+\s*--\s*$/gm;
 
 export async function loadPdf(buf: Buffer, filename: string): Promise<ParsedDoc> {
-  const pdf = await resolvePdf();
-  let out: Awaited<ReturnType<PdfFn>>;
+  const { PDFParse } = await import('pdf-parse');
+  const parser = new PDFParse({ data: new Uint8Array(buf) });
+
   try {
-    out = await pdf(buf);
+    const result = await parser.getText();
+    const text = result.text.replace(PAGE_SEPARATOR, '').replace(/\n{3,}/g, '\n\n').trim();
+    const pageCount = result.total ?? result.pages?.length ?? 0;
+
+    if (text.length < 40) {
+      throw new Error(
+        `${filename}: no extractable text (${text.length} chars across ${pageCount} pages). ` +
+        `This is likely a scanned/image-only PDF; OCR is out of scope.`,
+      );
+    }
+
+    let title = filename.replace(/\.pdf$/i, '');
+    try {
+      const info = await parser.getInfo();
+      const t = (info as { info?: { Title?: unknown } }).info?.Title;
+      if (typeof t === 'string' && t.trim()) title = t.trim();
+    } catch {
+      // Metadata is optional; the filename is a fine title.
+    }
+
+    return {
+      markdown: `# ${title}\n\n${text}`,
+      metadata: { title, filename, contentType: 'application/pdf', pageCount },
+    };
   } catch (e) {
     const msg = (e as Error).message ?? '';
+    if (msg.startsWith(`${filename}:`)) throw e; // our own guard, already formatted
     if (/password|encrypt/i.test(msg)) {
       throw new Error(`${filename}: encrypted PDF — password required`);
     }
     throw new Error(`${filename}: could not parse PDF — ${msg}`);
+  } finally {
+    await parser.destroy().catch(() => undefined);
   }
-
-  const text = out.text.trim();
-  if (text.length < 40) {
-    throw new Error(
-      `${filename}: no extractable text (${text.length} chars across ${out.numpages} pages). ` +
-      `This is likely a scanned/image-only PDF; OCR is out of scope.`,
-    );
-  }
-
-  const title = String((out.info?.Title as string) ?? '').trim() || filename.replace(/\.pdf$/i, '');
-  return {
-    markdown: `# ${title}\n\n${text}`,
-    metadata: { title, filename, contentType: 'application/pdf', pageCount: out.numpages },
-  };
 }

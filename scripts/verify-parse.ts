@@ -19,7 +19,12 @@ async function main() {
       console.log(`${f.padEnd(46)} REFUSED — ${(e as Error).message}`);
       continue;
     }
-    const hasRecaptcha = /reCAPTCHA/i.test(doc.markdown);
+    // Test for the trailing artifact BLOCK (a standalone line), not any mention:
+    // the cookies-policy table legitimately documents two "Google reCAPTCHA"
+    // cookies in its rows, and those must not read as boilerplate.
+    const hasRecaptcha = doc.markdown
+      .split('\n')
+      .some((l) => /^(reCAPTCHA|Recaptcha requires verification\.?|protected by \*\*reCAPTCHA\*\*)$/i.test(l.trim()));
     const startsH1 = /^#\s/.test(doc.markdown);
     const blankRuns = /\n{3,}/.test(doc.markdown);
     console.log(
