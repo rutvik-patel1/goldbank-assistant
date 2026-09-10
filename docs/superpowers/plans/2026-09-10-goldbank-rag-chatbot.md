@@ -958,46 +958,58 @@ export function loadScrapedJson(buf: Buffer, filename: string): ParsedDoc {
 
 - [ ] **Step 2: Write `lib/loaders/pdf.ts`**
 
-`pdf-parse` has shipped both a CommonJS default export and a named `pdf` export across versions, so resolve defensively rather than assuming.
+The installed `pdf-parse@2.4.5` exports a **`PDFParse` class**, not a function — there is no `default` or `pdf` export, so a v1-style import cannot work. Verified working shape: `new PDFParse({ data: Uint8Array }).getText()` resolves `{ pages, text, total }`, with `getInfo()` for document metadata and `destroy()` to release resources.
 
 ```ts
 import type { ParsedDoc } from '../../lib/types';
 
-type PdfFn = (data: Buffer) => Promise<{ text: string; numpages: number; info?: Record<string, unknown> }>;
-
-async function resolvePdf(): Promise<PdfFn> {
-  const mod = (await import('pdf-parse')) as unknown as Record<string, unknown>;
-  const fn = (mod.default ?? mod.pdf ?? mod) as unknown;
-  if (typeof fn !== 'function') throw new Error('Could not resolve the pdf-parse entry point');
-  return fn as PdfFn;
-}
+/**
+ * pdf-parse v2 exposes a class, not a function: `new PDFParse({data}).getText()`
+ * resolves to `{ pages, text, total }`. It also injects `-- n of m --` page
+ * separators into `text`, which must be stripped before the text is measured or
+ * indexed, or an image-only PDF's separator noise would pass the emptiness guard.
+ */
+const PAGE_SEPARATOR = /^\s*--\s*\d+\s+of\s+\d+\s*--\s*$/gm;
 
 export async function loadPdf(buf: Buffer, filename: string): Promise<ParsedDoc> {
-  const pdf = await resolvePdf();
-  let out: Awaited<ReturnType<PdfFn>>;
+  const { PDFParse } = await import('pdf-parse');
+  const parser = new PDFParse({ data: new Uint8Array(buf) });
+
   try {
-    out = await pdf(buf);
+    const result = await parser.getText();
+    const text = result.text.replace(PAGE_SEPARATOR, '').replace(/\n{3,}/g, '\n\n').trim();
+    const pageCount = result.total ?? result.pages?.length ?? 0;
+
+    if (text.length < 40) {
+      throw new Error(
+        `${filename}: no extractable text (${text.length} chars across ${pageCount} pages). ` +
+        `This is likely a scanned/image-only PDF; OCR is out of scope.`,
+      );
+    }
+
+    let title = filename.replace(/\.pdf$/i, '');
+    try {
+      const info = await parser.getInfo();
+      const t = (info as { info?: { Title?: unknown } }).info?.Title;
+      if (typeof t === 'string' && t.trim()) title = t.trim();
+    } catch {
+      // Metadata is optional; the filename is a fine title.
+    }
+
+    return {
+      markdown: `# ${title}\n\n${text}`,
+      metadata: { title, filename, contentType: 'application/pdf', pageCount },
+    };
   } catch (e) {
     const msg = (e as Error).message ?? '';
+    if (msg.startsWith(`${filename}:`)) throw e; // our own guard, already formatted
     if (/password|encrypt/i.test(msg)) {
       throw new Error(`${filename}: encrypted PDF — password required`);
     }
     throw new Error(`${filename}: could not parse PDF — ${msg}`);
+  } finally {
+    await parser.destroy().catch(() => undefined);
   }
-
-  const text = out.text.trim();
-  if (text.length < 40) {
-    throw new Error(
-      `${filename}: no extractable text (${text.length} chars across ${out.numpages} pages). ` +
-      `This is likely a scanned/image-only PDF; OCR is out of scope.`,
-    );
-  }
-
-  const title = String((out.info?.Title as string) ?? '').trim() || filename.replace(/\.pdf$/i, '');
-  return {
-    markdown: `# ${title}\n\n${text}`,
-    metadata: { title, filename, contentType: 'application/pdf', pageCount: out.numpages },
-  };
 }
 ```
 
@@ -1234,7 +1246,12 @@ async function main() {
       console.log(`${f.padEnd(46)} REFUSED — ${(e as Error).message}`);
       continue;
     }
-    const hasRecaptcha = /reCAPTCHA/i.test(doc.markdown);
+    // Test for the trailing artifact BLOCK (a standalone line), not any mention:
+    // the cookies-policy table legitimately documents two "Google reCAPTCHA"
+    // cookies in its rows, and those must not read as boilerplate.
+    const hasRecaptcha = doc.markdown
+      .split('\n')
+      .some((l) => /^(reCAPTCHA|Recaptcha requires verification\.?|protected by \*\*reCAPTCHA\*\*)$/i.test(l.trim()));
     const startsH1 = /^#\s/.test(doc.markdown);
     const blankRuns = /\n{3,}/.test(doc.markdown);
     console.log(
@@ -1267,8 +1284,15 @@ main();
 npx tsx scripts/verify-parse.ts
 ```
 
+The corpus exercises only the JSON path, so the other loaders must be proven separately against
+real fixtures built under `./data/` (gitignored) and deleted afterward. The PDF path in particular
+must be executed, not assumed — generate a small valid PDF and confirm `loadPdf` returns its text
+and a `pageCount`.
+
 Expected: **9** parsed lines, every one showing `h1=y`, `recaptcha=clean`, `blankruns=clean`,
-`url=y`; plus exactly one `REFUSED` line for
+`url=y` — note `recaptcha` tests for the trailing artifact *block*, so the cookies-policy table's
+two legitimate "Google reCAPTCHA" cookie rows correctly do not trip it; plus exactly one `REFUSED`
+line for
 `goldbank.co.uk_legal_returns-and-exchanges.json`, whose message names HTTP 404. That page was
 scraped as a 404 stub, so refusing it is the correct behaviour — indexing it would let the bot
 answer returns questions from an error page. The zip line reads
