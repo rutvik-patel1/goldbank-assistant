@@ -22,6 +22,11 @@
 - **Only `lib/store/index.ts` and `lib/store/*.ts` may import `@lancedb/lancedb`.** All other code depends on the `VectorStore` interface from `lib/store/types.ts`.
 - **Answer-time context contains verbatim chunk text only.** Enrichment output (summaries, hypothetical questions) is embedded but must never be shown to the generation model as if it were source material.
 - **Next.js 16 dynamic route params are async:** type them `{ params: Promise<{ id: string }> }` and `await params`.
+- **The corpus holds 10 files but only 9 indexable documents.**
+  `goldbank.co.uk_legal_returns-and-exchanges.json` was scraped as HTTP 404 and its body is a
+  "404 - Page not found" stub. `loadScrapedJson` refuses any document with `statusCode >= 400`, so
+  it is never indexed. Expect 9 ready documents everywhere, and treat its refusal as correct
+  behaviour rather than a bug to fix.
 - **Commit after every task** using the message given in that task's final step.
 
 ---
@@ -1216,8 +1221,19 @@ import { parseFile } from '../lib/pipeline/parse';
 async function main() {
   const files = (await readdir(paths.corpus)).filter((f) => f.endsWith('.json')).sort();
   console.log(`corpus files: ${files.length}\n`);
+  let refused = 0;
   for (const f of files) {
-    const [doc] = await parseFile(await readFile(join(paths.corpus, f)), f);
+    let doc;
+    try {
+      [doc] = await parseFile(await readFile(join(paths.corpus, f)), f);
+    } catch (e) {
+      // One corpus page (returns-and-exchanges) was scraped as HTTP 404 and its
+      // body is a "404 - Page not found" stub. Refusing it is correct behaviour,
+      // not a failure: indexing it would answer policy questions from an error page.
+      refused++;
+      console.log(`${f.padEnd(46)} REFUSED — ${(e as Error).message}`);
+      continue;
+    }
     const hasRecaptcha = /reCAPTCHA/i.test(doc.markdown);
     const startsH1 = /^#\s/.test(doc.markdown);
     const blankRuns = /\n{3,}/.test(doc.markdown);
@@ -1227,12 +1243,16 @@ async function main() {
       `blankruns=${blankRuns ? 'PRESENT' : 'clean'} url=${doc.metadata.sourceUrl ? 'y' : 'N'}`,
     );
   }
+  if (refused !== 1) {
+    console.log(`\nFAIL expected exactly 1 refused document (the 404 page), got ${refused}`);
+    process.exitCode = 1;
+  }
 
   // Zip path: the original archive must expand to 10 documents.
   const zip = '/home/bacancy/Downloads/bdcdbd9c-8a16-4399-9f65-e56026c44dcf.zip';
   try {
     const docs = await parseFile(await readFile(zip), 'kb.zip');
-    console.log(`\nzip expansion: ${docs.length} documents (expect 10)`);
+    console.log(`\nzip expansion: ${docs.length} documents (expect 9)`);
   } catch (e) {
     console.log(`\nzip expansion skipped: ${(e as Error).message}`);
   }
@@ -1247,7 +1267,13 @@ main();
 npx tsx scripts/verify-parse.ts
 ```
 
-Expected: 10 corpus lines, every one showing `h1=y`, `recaptcha=clean`, `blankruns=clean`, `url=y`; and `zip expansion: 10 documents (expect 10)`. Any `recaptcha=PRESENT` means a boilerplate pattern needs adjusting in `config.BOILERPLATE_PATTERNS`.
+Expected: **9** parsed lines, every one showing `h1=y`, `recaptcha=clean`, `blankruns=clean`,
+`url=y`; plus exactly one `REFUSED` line for
+`goldbank.co.uk_legal_returns-and-exchanges.json`, whose message names HTTP 404. That page was
+scraped as a 404 stub, so refusing it is the correct behaviour — indexing it would let the bot
+answer returns questions from an error page. The zip line reads
+`zip expansion: 9 documents (expect 9)`. Any `recaptcha=PRESENT` means a boilerplate pattern needs
+adjusting in `config.BOILERPLATE_PATTERNS`.
 
 - [ ] **Step 9: Commit**
 
@@ -2321,7 +2347,7 @@ async function main() {
   const files = await filesToIngest(target);
   console.log(`${files.length} file(s)\n`);
 
-  let ok = 0, failed = 0, skipped = 0;
+  let ok = 0, failed = 0, skipped = 0, refusedCount = 0;
   for (const [name, buf] of files) {
     const emit = (e: IngestEvent) => {
       if (e.type === 'status' && e.done !== undefined) {
@@ -2337,7 +2363,10 @@ async function main() {
       }
     };
     for (const r of await ingestBuffer(buf, name, emit)) {
-      if (r.error) failed++;
+      // A page the loaders deliberately reject (e.g. a scraped 404) is refused
+      // input, not a broken pipeline — it must not fail the seed run.
+      if (r.error && /error page|HTTP 4\d\d/i.test(r.error)) refusedCount++;
+      else if (r.error) failed++;
       else if (r.skipped) skipped++;
       else ok++;
     }
@@ -2345,7 +2374,7 @@ async function main() {
 
   const store = await getStore();
   const docs = await listDocuments();
-  console.log(`\nindexed ${ok} document(s), skipped ${skipped}, failed ${failed}`);
+  console.log(`\nindexed ${ok} document(s), skipped ${skipped}, refused ${refusedCount}, failed ${failed}`);
   console.log(`manifest: ${docs.length} record(s), ${docs.filter((d) => d.status === 'ready').length} ready`);
   console.log(`vectors in store: ${await store.count()}`);
   if (failed > 0) process.exit(1);
@@ -2364,7 +2393,11 @@ rm -rf data
 npx tsx --env-file=.env.local scripts/seed.ts
 ```
 
-Expected: ten `ready` lines, then a summary reading `indexed 10 document(s), skipped 0, failed 0`, a manifest of 10 records all ready, and a vector count matching the total from Task 5's verification. First run takes a couple of minutes (enrichment); note the elapsed time.
+Expected: **nine** `ready` lines plus one `FAILED` line for the returns-and-exchanges 404 stub,
+then a summary reading `indexed 9 document(s), skipped 0, refused 1, failed 0`, a manifest of 9
+records all ready, and a vector count matching the total from Task 5's verification. Exit code must
+be 0 — a refused source page is not a seed failure. First run takes a couple of minutes
+(enrichment); note the elapsed time.
 
 Then confirm idempotency and the cache:
 
@@ -2372,7 +2405,9 @@ Then confirm idempotency and the cache:
 npx tsx --env-file=.env.local scripts/seed.ts
 ```
 
-Expected: ten `skipped — already indexed (identical content)` lines, `indexed 0 document(s), skipped 10, failed 0`, and the same vector count. This run should take seconds.
+Expected: **nine** `skipped — already indexed (identical content)` lines,
+`indexed 0 document(s), skipped 9, refused 1, failed 0`, and the same vector count. This run should
+take seconds.
 
 Also confirm the escape hatch end-to-end:
 
@@ -4017,12 +4052,12 @@ npm run dev   # open http://localhost:3000/knowledge
 ```
 
 Check by hand:
-1. The header reads `10 documents · <N> indexed chunks`, matching the seed output.
+1. The header reads `9 documents · <N> indexed chunks`, matching the seed output. (The 404 returns-and-exchanges page is correctly absent — it is refused at parse time.)
 2. Expanding `Frequently Asked Questions` lists chunks with **qa** badges, each showing one question and its answer, plus enrichment (`Summary`, `Also answers`, `Keywords`).
 3. Expanding `Terms of Service` shows **clause** badges with recovered breadcrumbs like `Terms of Service › Acceptable Use` and `#tos-acceptable-use` anchors — visible proof that heading recovery worked.
 4. Expanding `Cookies Policy` shows at least one **table** badge whose text contains an intact markdown table.
 5. Drag in a small PDF or `.md` file: stage labels advance `parsing → chunking → enriching x/y → embedding x/y → ready`, then the document appears in the list and the chunk count rises.
-6. Drop the original `bdcdbd9c-….zip`: it reports 10 `skipped — already indexed` results.
+6. Drop the original `bdcdbd9c-….zip`: it reports 9 `skipped — already indexed` results and one refusal for the 404 page.
 7. Drop an unsupported file (e.g. a `.png`): a red error names the supported formats and nothing is indexed.
 8. Remove a document: it disappears, the chunk count drops, and asking a question about it in the chat no longer cites it. Then run `npm run seed` to restore.
 
