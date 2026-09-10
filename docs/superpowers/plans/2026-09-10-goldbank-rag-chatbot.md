@@ -100,6 +100,27 @@ npm install langchain@^1.5.11 @langchain/core@^1.2.10 @langchain/google-genai@^2
 npm install --save-dev tsx @types/turndown @types/unzipper
 ```
 
+- [ ] **Step 2b: Configure server-external packages in `next.config.ts`**
+
+The production build fails without this. Turbopack cannot bundle LanceDB's native binary, and
+`unzipper` carries an optional `aws-sdk` require it cannot resolve. Both must stay external and be
+required at runtime by Node:
+
+```ts
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
+  // LanceDB ships a platform-specific native binary and unzipper has an optional
+  // aws-sdk require; neither can be bundled. Node requires them at runtime instead.
+  serverExternalPackages: ['@lancedb/lancedb', 'unzipper'],
+};
+
+export default nextConfig;
+```
+
+This surfaces only once route handlers exist (Task 8), but belongs here so `npm run build` is
+green from the start.
+
 - [ ] **Step 3: Add npm scripts**
 
 Merge into `package.json`:
@@ -2802,9 +2823,12 @@ curl -s "localhost:3000/api/documents?documentId=$DOC" | head -c 300
 curl -N -s -F "files=@knowledge-base/goldbank/goldbank.co.uk_faqs.json" localhost:3000/api/ingest
 # expect: event: status (parsing) ... then event: skipped (already indexed)
 
-# Rejections
-curl -s -F "files=@package.json" localhost:3000/api/ingest
-# expect: HTTP 415 with the supported-formats list
+# Rejections — note the file must have a genuinely UNSUPPORTED extension.
+# Do not use package.json here: `.json` IS in SUPPORTED_EXTENSIONS (it is the
+# scraped-corpus format), so it passes validation and fails later at parse time
+# inside the SSE stream instead of returning 415.
+curl -s -o /dev/null -w '%{http_code}\n' -F "files=@next.config.ts" localhost:3000/api/ingest
+# expect: 415, with a body listing the supported formats
 
 # Deletion removes vectors and the record
 curl -s -X DELETE "localhost:3000/api/documents/$DOC"    # {"ok":true}
