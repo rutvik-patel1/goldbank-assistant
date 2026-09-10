@@ -22,6 +22,9 @@ export const config = {
   HEADING_CAPS_RATIO: 0.6,
   MAX_SENTENCE_HEADING_CHARS: 70,
   MAX_SENTENCE_HEADING_WORDS: 10,
+  MIN_HEADING_LETTERS: 3,
+  MAX_HEADING_UPPER_RATIO: 0.9,
+  MAX_HEADING_WORDS: 14,
 
   // Enrichment
   ENRICHMENT: (process.env.ENRICHMENT ?? 'on') as 'on' | 'off',
