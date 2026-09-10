@@ -3071,12 +3071,18 @@ import { buildContext } from '../lib/rag/context';
 import { config } from '../lib/config';
 import type { ChatTurn } from '../lib/types';
 
+// expectDoc must match the titles the pipeline actually stores, which come from
+// each document's own h1 (see deriveTitle in lib/loaders/scraped-json.ts):
+//   Frequently Asked Questions · Cookies Policy · Delivery Options ·
+//   Privacy Policy · Returns & Cancellations Policy · Terms of Service ·
+//   Terms and conditions · Modern Slavery Statement · Copyright and Trademark Notices
+// Note the FAQ page's h1 is "Frequently Asked Questions" and contains no "FAQ".
 const CASES: { q: string; expectDoc: RegExp }[] = [
-  { q: 'How do I earn points when I sell gold to you?', expectDoc: /FAQ/i },
-  { q: 'Do you deliver outside the UK?',                expectDoc: /FAQ|Delivery/i },
-  { q: 'What happens if I cancel my order?',            expectDoc: /FAQ|Terms|Returns/i },
-  { q: 'Can I get my money back on a purchase?',        expectDoc: /Returns|Terms|FAQ/i },
-  { q: 'What cookies does the site set?',               expectDoc: /Cookie/i },
+  { q: 'How do I earn points when I sell gold to you?', expectDoc: /Frequently Asked/i },
+  { q: 'Do you deliver outside the UK?',                expectDoc: /Frequently Asked|Delivery/i },
+  { q: 'What happens if I cancel my order?',            expectDoc: /Frequently Asked|Terms|Returns/i },
+  { q: 'Can I get my money back on a purchase?',        expectDoc: /Returns|Terms|Frequently Asked/i },
+  { q: 'What cookies does the site set?',               expectDoc: /Cookies/i },
 ];
 
 async function main() {
@@ -4419,17 +4425,17 @@ import { streamAnswer, validateCitations } from '../lib/rag/answer';
 const GOLDEN: { q: string; expectDoc: RegExp; expectText: RegExp }[] = [
   {
     q: 'How does the points system work?',
-    expectDoc: /FAQ/i,
+    expectDoc: /Frequently Asked/i,
     expectText: /1 point for every £1/i,
   },
   {
     q: 'Do you ship outside the UK?',
-    expectDoc: /FAQ|Delivery/i,
+    expectDoc: /Frequently Asked|Delivery/i,
     expectText: /(do not|don't|only).*(UK|mainland)/i,
   },
   {
     q: 'Is there a fee if I cancel my order?',
-    expectDoc: /FAQ|Terms|Returns/i,
+    expectDoc: /Frequently Asked|Terms|Returns/i,
     expectText: /£100|cancellation fee/i,
   },
 ];
@@ -4557,6 +4563,12 @@ Notable knobs:
 | `ENRICHMENT` | `on` | `off` skips the LLM enrichment stage |
 | `TOP_K` | `8` | Candidates retrieved |
 | `MIN_SCORE` | `0.55` | Below this, the bot refuses instead of guessing |
+
+The enrichment cache key includes each chunk's heading path, whose first element is the document
+title. So changing title derivation, heading recovery, or chunking invalidates the cache and forces
+a full re-enrichment — roughly 111 calls, which on a free-tier key (15/min) needs two or three
+`npm run seed -- --force` passes to converge. Each pass caches what succeeded, so it always
+converges; the seed's coverage line tells you when you are done.
 
 Changing `EMBEDDING_MODEL` or `EMBEDDING_DIMENSIONS` invalidates the index —
 delete `./data` and re-seed. The app refuses to write a mismatched index rather
