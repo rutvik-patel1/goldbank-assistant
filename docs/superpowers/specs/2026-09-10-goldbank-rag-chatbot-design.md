@@ -137,7 +137,7 @@ export interface VectorStore {
 | `question` | for `qa` chunks, the literal question text |
 | `partIndex`, `partCount` | set when a section was split; drives sibling expansion |
 | `summary`, `hypotheticalQuestions`, `keywords` | enrichment output |
-| `sourceUrl`, `sourceTitle`, `charStart`, `charEnd` | citation targets |
+| `sourceUrl`, `sourceTitle` | citation targets |
 
 `Document` (in `documents.json`): `id`, `filename`, `sourceUrl`, `title`,
 `contentHash`, `status` (`parsing` | `chunking` | `enriching` | `embedding` |

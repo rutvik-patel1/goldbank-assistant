@@ -264,8 +264,6 @@ export interface Chunk {
   partCount?: number;
   sourceUrl?: string;
   sourceTitle: string;
-  charStart: number;
-  charEnd: number;
   enrichment?: Enrichment;
 }
 
@@ -567,8 +565,6 @@ export interface StoreRow {
   question: string;    // ''
   partIndex: number;   // -1 when not a split part
   partCount: number;   // -1
-  charStart: number;
-  charEnd: number;
   metaJson: string;    // { headingPath, enrichment }
 }
 
@@ -586,8 +582,6 @@ export function toRow(c: EmbeddedChunk): StoreRow {
     question: c.question ?? '',
     partIndex: c.partIndex ?? -1,
     partCount: c.partCount ?? -1,
-    charStart: c.charStart,
-    charEnd: c.charEnd,
     metaJson: JSON.stringify({ headingPath: c.headingPath, enrichment: c.enrichment ?? null }),
   };
 }
@@ -610,8 +604,6 @@ export function fromRow(r: StoreRow): EmbeddedChunk {
     question: r.question || undefined,
     partIndex: r.partIndex >= 0 ? r.partIndex : undefined,
     partCount: r.partCount >= 0 ? r.partCount : undefined,
-    charStart: r.charStart,
-    charEnd: r.charEnd,
     headingPath: meta.headingPath,
     enrichment: meta.enrichment ?? undefined,
   };
@@ -845,7 +837,7 @@ function chunk(i: number, documentId: string): EmbeddedChunk {
   return {
     id: `c${i}`, documentId, ordinal: i, text: `text ${i}`, kind: 'clause',
     headingPath: ['Doc', `Section ${i}`], sourceTitle: 'Doc',
-    charStart: 0, charEnd: 6, embedding: vec(i + 1),
+    embedding: vec(i + 1),
     partIndex: i === 2 ? 0 : undefined, partCount: i === 2 ? 2 : undefined,
   };
 }
@@ -1674,7 +1666,6 @@ import { normalizeTitle, promoteHeadings } from './headings';
 interface Section {
   headingPath: string[];
   body: string;
-  charStart: number;
 }
 
 /** Split promoted markdown into sections, tracking the heading stack. */
@@ -1683,13 +1674,11 @@ function toSections(markdown: string): Section[] {
   const sections: Section[] = [];
   const stack: { level: number; title: string }[] = [];
   let buf: string[] = [];
-  let charStart = 0;
-  let cursor = 0;
 
   const flush = () => {
     const body = buf.join('\n').trim();
     if (body) {
-      sections.push({ headingPath: stack.map((s) => s.title), body, charStart });
+      sections.push({ headingPath: stack.map((s) => s.title), body });
     }
     buf = [];
   };
@@ -1701,11 +1690,9 @@ function toSections(markdown: string): Section[] {
       const level = m[1].length;
       while (stack.length && stack[stack.length - 1].level >= level) stack.pop();
       stack.push({ level, title: m[2].trim() });
-      charStart = cursor + line.length + 1;
     } else {
       buf.push(line);
     }
-    cursor += line.length + 1;
   }
   flush();
   return sections;
@@ -1869,11 +1856,24 @@ export function chunkDocument(doc: ParsedDoc, documentId: string): Chunk[] {
     }
 
     for (const d of drafts) {
-      // Drop fragments — but never a Q&A pair. A `qa` draft is complete by
-      // construction (one question plus its own answer), so a short one is a
-      // short ANSWER, not a scrap: "Do you buy diamonds?" / "No." is 7 tokens
-      // and is exactly the kind of question a customer asks.
-      if (d.kind !== 'qa' && countTokens(d.text) < config.MIN_CHUNK_TOKENS) continue;
+      // Drop fragments — but never a Q&A pair, and never one part of a split
+      // section.
+      //
+      // A `qa` draft is complete by construction (one question plus its own
+      // answer), so a short one is a short ANSWER, not a scrap:
+      // "Do you buy diamonds?" / "No." is 7 tokens and is exactly the kind of
+      // question a customer asks.
+      //
+      // A draft carrying `partIndex` belongs to a family whose indices were
+      // fixed during packing and are never renumbered, while `ordinal` advances
+      // only on emission. Dropping one member would leave the survivors'
+      // `partIndex` pointing at the wrong `ordinal`, and Task 9's sibling
+      // expansion (`from = ordinal - partIndex`) would then stitch in text from
+      // an unrelated adjacent section — silently, with no error.
+      const isSplitPart = d.partIndex !== undefined;
+      if (d.kind !== 'qa' && !isSplitPart && countTokens(d.text) < config.MIN_CHUNK_TOKENS) {
+        continue;
+      }
       const leafTitle = d.headingPath[d.headingPath.length - 1] ?? title;
       chunks.push({
         id: `${documentId}:${ordinal}:${nanoid(6)}`,
@@ -1888,8 +1888,6 @@ export function chunkDocument(doc: ParsedDoc, documentId: string): Chunk[] {
         partCount: d.partCount,
         sourceUrl: doc.metadata.sourceUrl,
         sourceTitle: title,
-        charStart: section.charStart,
-        charEnd: section.charStart + d.text.length,
       });
     }
   }
@@ -1950,7 +1948,21 @@ async function main() {
       `maxTok=${String(maxTok).padStart(4)} ${JSON.stringify(byKind)}`,
     );
 
+    // Every split family must occupy consecutive ordinals with partIndex
+    // counting from 0, or Task 9's sibling expansion stitches in foreign text.
     for (const c of chunks) {
+      if (c.partIndex !== undefined && c.partCount !== undefined) {
+        const first = c.ordinal - c.partIndex;
+        const family = chunks.filter((x) => x.ordinal >= first && x.ordinal < first + c.partCount);
+        const contiguous =
+          family.length === c.partCount &&
+          family.every((x, i) => x.partIndex === i && x.headingPath.join('>') === c.headingPath.join('>'));
+        if (!contiguous) {
+          failed = true;
+          console.log(`  FAIL split family broken at ${c.id}: ordinal=${c.ordinal} ` +
+                      `partIndex=${c.partIndex}/${c.partCount} resolved ${family.length} siblings`);
+        }
+      }
       if (!tableIntact(c)) {
         failed = true;
         console.log(`  FAIL table split across chunk boundary: ${c.id}`);
