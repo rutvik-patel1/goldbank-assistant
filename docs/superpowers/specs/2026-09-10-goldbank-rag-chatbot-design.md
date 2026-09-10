@@ -71,7 +71,7 @@ gb-chatbot/
 │     ├─ ingest/route.ts            POST multipart → SSE progress
 │     ├─ documents/route.ts         GET list · DELETE doc + vectors
 │     ├─ chats/route.ts             POST create · GET list
-│     ├─ chats/[id]/route.ts        GET · PATCH append turn
+│     ├─ chats/[id]/route.ts        GET one session
 │     └─ chat/route.ts              POST {chatId, messages} → streamed answer + citations
 ├─ lib/
 │  ├─ config.ts                     every tunable, one place
@@ -133,7 +133,7 @@ export interface VectorStore {
 | `embedding` | `number[768]` |
 | `headingPath` | breadcrumb, e.g. `["Terms of Service", "Acceptable Use"]` |
 | `anchor` | URL fragment recovered from the TOC, e.g. `tos-acceptable-use` |
-| `kind` | `"qa"` \| `"clause"` \| `"prose"` |
+| `kind` | `"qa"` \| `"clause"` \| `"table"` \| `"prose"` |
 | `question` | for `qa` chunks, the literal question text |
 | `partIndex`, `partCount` | set when a section was split; drives sibling expansion |
 | `summary`, `hypotheticalQuestions`, `keywords` | enrichment output |
@@ -225,7 +225,8 @@ and a `partIndex`/`partCount`.
 plus its preceding paragraph as caption context.
 
 **Prose fallback** (`kind: "prose"`) — recursive character splitting for anything the
-above do not claim.
+above do not claim. Table chunks carry `kind: "table"` so the library UI can
+label them distinctly.
 
 Chunks are prefixed with their breadcrumb at embedding time
 (`Terms of Service › Acceptable Use\n\n<text>`) so the vector encodes location.
