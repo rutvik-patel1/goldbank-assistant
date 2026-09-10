@@ -20,6 +20,8 @@ export const config = {
   MAX_QUESTION_CHARS: 140,
   MAX_HEADING_CHARS: 90,
   HEADING_CAPS_RATIO: 0.6,
+  MAX_SENTENCE_HEADING_CHARS: 70,
+  MAX_SENTENCE_HEADING_WORDS: 10,
 
   // Enrichment
   ENRICHMENT: (process.env.ENRICHMENT ?? 'on') as 'on' | 'off',
