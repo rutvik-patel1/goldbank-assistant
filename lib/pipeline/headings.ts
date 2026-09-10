@@ -52,7 +52,12 @@ function passesBaseExclusions(t: string): boolean {
   // List item — but a numbered heading (`1\. Title`) looks like one, so exempt it.
   if (/^\s*([-*+]|\d+[.)])\s/.test(t) && !NUMBERED_HEADING.test(t)) return false;
   if (/^[|>]/.test(t)) return false;                  // table row or blockquote
-  if (/[.:;!?]$/.test(t)) return false;               // terminal punctuation
+  // Terminal punctuation — but a numbered heading may legitimately be phrased as
+  // a question ("3\. How is your personal data collected?"), so exempt it here too.
+  // The exemption is deliberately limited to NUMBERED headings: FAQ questions also
+  // end in "?" and must stay body text, because the Q&A splitter pairs each one
+  // with its answer inside a section rather than treating it as a section title.
+  if (/[.:;!?]$/.test(t) && !NUMBERED_HEADING.test(t)) return false;
   if (/^\*\*.*\*\*$/.test(t)) return false;           // fully bold = emphasis, not a heading
   if (/^\[.*\]\(.*\)$/.test(t)) return false;         // bare link
   if (/\]\(/.test(t)) return false;                   // contains an inline link
