@@ -177,6 +177,7 @@ export const config = {
   MAX_CHUNK_TOKENS: int('MAX_CHUNK_TOKENS', 450),
   CHUNK_OVERLAP_RATIO: 0.15,
   MAX_QUESTION_CHARS: 140,
+  MIN_CHUNK_TOKENS: 12,
   MAX_HEADING_CHARS: 90,
   HEADING_CAPS_RATIO: 0.6,
   MAX_SENTENCE_HEADING_CHARS: 70,
@@ -1868,7 +1869,11 @@ export function chunkDocument(doc: ParsedDoc, documentId: string): Chunk[] {
     }
 
     for (const d of drafts) {
-      if (countTokens(d.text) < 12) continue; // drop scraps
+      // Drop fragments — but never a Q&A pair. A `qa` draft is complete by
+      // construction (one question plus its own answer), so a short one is a
+      // short ANSWER, not a scrap: "Do you buy diamonds?" / "No." is 7 tokens
+      // and is exactly the kind of question a customer asks.
+      if (d.kind !== 'qa' && countTokens(d.text) < config.MIN_CHUNK_TOKENS) continue;
       const leafTitle = d.headingPath[d.headingPath.length - 1] ?? title;
       chunks.push({
         id: `${documentId}:${ordinal}:${nanoid(6)}`,
@@ -1958,9 +1963,9 @@ async function main() {
 
     if (f.endsWith('faqs.json')) {
       const qa = chunks.filter((c) => c.kind === 'qa');
-      if (qa.length < 15) {
+      if (qa.length < 16) {
         failed = true;
-        console.log(`  FAIL expected >=15 qa chunks in faqs, got ${qa.length}`);
+        console.log(`  FAIL expected >=16 qa chunks in faqs, got ${qa.length}`);
       }
       const points = qa.find((c) => /how does the points system work/i.test(c.question ?? ''));
       if (!points) {
@@ -1992,10 +1997,15 @@ npx tsx scripts/verify-chunk.ts
 ```
 
 Expected:
-- `faqs.json` yields mostly `qa` chunks, at least 15 of them, and the points-system question is one chunk carrying its own answer.
+- `faqs.json` yields mostly `qa` chunks, at least **16** of them, and the points-system question is
+  one chunk carrying its own answer. The count includes the two one-word-answer pairs
+  ("Do you buy diamonds?" / "No.") — if it reads 14, the scrap filter is being applied to `qa`
+  drafts and real answers are being discarded.
 - Legal pages yield mostly `clause` chunks; `cookies-policy`, `privacy-policy`, and `delivery-options` each show at least one `table` chunk.
 - `maxTok` never greatly exceeds `MAX_CHUNK_TOKENS` (450) — a table chunk may legitimately exceed it, since tables are never split.
-- Total across the corpus lands roughly in the 150–350 range.
+- Total across the corpus lands around **110** chunks (measured: the corpus is 15,384 tokens and
+  chunks average ~141 tokens, so ~110 accounts for all of it). Substantially more would mean the
+  packer is over-splitting; substantially fewer means content is being dropped.
 - No `FAIL` lines; ends with `Chunking assertions passed.`
 
 - [ ] **Step 7: Commit**
@@ -2519,7 +2529,7 @@ npx tsx --env-file=.env.local scripts/seed.ts
 
 Expected: **nine** `ready` lines plus one `FAILED` line for the returns-and-exchanges 404 stub,
 then a summary reading `indexed 9 document(s), skipped 0, refused 1, failed 0`, a manifest of 9
-records all ready, and a vector count matching the total from Task 5's verification. Exit code must
+records all ready, and a vector count matching the total from Task 5's verification (~110). Exit code must
 be 0 — a refused source page is not a seed failure. First run takes a couple of minutes
 (enrichment); note the elapsed time.
 

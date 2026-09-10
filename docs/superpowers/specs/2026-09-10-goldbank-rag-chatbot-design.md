@@ -247,7 +247,7 @@ hypothetical question. **Embedded text** = breadcrumb + hypothetical questions +
 summary + verbatim text. **Text shown to the model at answer time** = verbatim only.
 Retrieval gets the paraphrase; generation gets the source of truth.
 
-Bounded cost: ~250 chunks, one cheap call each, cached at
+Bounded cost: ~110 chunks (measured), one cheap call each, cached at
 `./data/enrichment-cache/<contentHash>.json`. Re-ingestion is free.
 `ENRICHMENT=off` skips the stage.
 
