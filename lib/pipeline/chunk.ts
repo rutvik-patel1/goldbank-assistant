@@ -194,7 +194,7 @@ export function chunkDocument(doc: ParsedDoc, documentId: string): Chunk[] {
     }
 
     for (const d of drafts) {
-      if (countTokens(d.text) < 12) continue; // drop scraps
+      if (d.kind !== 'qa' && countTokens(d.text) < config.MIN_CHUNK_TOKENS) continue; // drop scraps
       const leafTitle = d.headingPath[d.headingPath.length - 1] ?? title;
       chunks.push({
         id: `${documentId}:${ordinal}:${nanoid(6)}`,

@@ -53,9 +53,9 @@ async function main() {
 
     if (f.endsWith('faqs.json')) {
       const qa = chunks.filter((c) => c.kind === 'qa');
-      if (qa.length < 15) {
+      if (qa.length < 16) {
         failed = true;
-        console.log(`  FAIL expected >=15 qa chunks in faqs, got ${qa.length}`);
+        console.log(`  FAIL expected >=16 qa chunks in faqs, got ${qa.length}`);
       }
       const points = qa.find((c) => /how does the points system work/i.test(c.question ?? ''));
       if (!points) {
