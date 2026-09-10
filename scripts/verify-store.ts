@@ -30,7 +30,7 @@ async function run() {
     return {
       id: `c${i}`, documentId, ordinal: i, text: `text ${i}`, kind: 'clause',
       headingPath: ['Doc', `Section ${i}`], sourceTitle: 'Doc',
-      charStart: 0, charEnd: 6, embedding: vec(i + 1),
+      embedding: vec(i + 1),
       partIndex: i === 2 ? 0 : undefined, partCount: i === 2 ? 2 : undefined,
     };
   }

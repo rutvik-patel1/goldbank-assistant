@@ -30,8 +30,6 @@ export interface StoreRow {
   question: string;    // ''
   partIndex: number;   // -1 when not a split part
   partCount: number;   // -1
-  charStart: number;
-  charEnd: number;
   metaJson: string;    // { headingPath, enrichment }
 }
 
@@ -49,8 +47,6 @@ export function toRow(c: EmbeddedChunk): StoreRow {
     question: c.question ?? '',
     partIndex: c.partIndex ?? -1,
     partCount: c.partCount ?? -1,
-    charStart: c.charStart,
-    charEnd: c.charEnd,
     metaJson: JSON.stringify({ headingPath: c.headingPath, enrichment: c.enrichment ?? null }),
   };
 }
@@ -73,8 +69,6 @@ export function fromRow(r: StoreRow): EmbeddedChunk {
     question: r.question || undefined,
     partIndex: r.partIndex >= 0 ? r.partIndex : undefined,
     partCount: r.partCount >= 0 ? r.partCount : undefined,
-    charStart: r.charStart,
-    charEnd: r.charEnd,
     headingPath: meta.headingPath,
     enrichment: meta.enrichment ?? undefined,
   };

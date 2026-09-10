@@ -31,8 +31,6 @@ export interface Chunk {
   partCount?: number;
   sourceUrl?: string;
   sourceTitle: string;
-  charStart: number;
-  charEnd: number;
   enrichment?: Enrichment;
 }
 

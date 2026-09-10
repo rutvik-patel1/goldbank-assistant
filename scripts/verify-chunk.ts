@@ -40,7 +40,22 @@ async function main() {
       `maxTok=${String(maxTok).padStart(4)} ${JSON.stringify(byKind)}`,
     );
 
+    // Every split family must occupy consecutive ordinals with partIndex
+    // counting from 0, or Task 9's sibling expansion stitches in foreign text.
     for (const c of chunks) {
+      if (c.partIndex !== undefined && c.partCount !== undefined) {
+        const first = c.ordinal - c.partIndex;
+        const partCount = c.partCount;
+        const family = chunks.filter((x) => x.ordinal >= first && x.ordinal < first + partCount);
+        const contiguous =
+          family.length === partCount &&
+          family.every((x, i) => x.partIndex === i && x.headingPath.join('>') === c.headingPath.join('>'));
+        if (!contiguous) {
+          failed = true;
+          console.log(`  FAIL split family broken at ${c.id}: ordinal=${c.ordinal} ` +
+                      `partIndex=${c.partIndex}/${c.partCount} resolved ${family.length} siblings`);
+        }
+      }
       if (!tableIntact(c)) {
         failed = true;
         console.log(`  FAIL table split across chunk boundary: ${c.id}`);
