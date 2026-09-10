@@ -1494,7 +1494,12 @@ export function promoteHeadings(markdown: string): {
     const followedByContent = following !== null && !/^#{1,6}\s/.test(following.trim());
 
     if ((inToc || heuristic) && followedByContent) {
-      const title = line.trim().replace(/^\*\*|\*\*$/g, '');
+      // Unescape markdown's `1\.` numbering: headingPath feeds citation
+      // breadcrumbs in the UI, where a literal backslash would show through.
+      const title = line
+        .trim()
+        .replace(/^\*\*|\*\*$/g, '')
+        .replace(/^(\d+)\\\.(\s)/, '$1.$2');
       // Once a document has shown numbered top-level sections (the privacy
       // policy's `1\.`…`8\.`), later unnumbered titles are their subsections —
       // nesting them yields breadcrumbs like
