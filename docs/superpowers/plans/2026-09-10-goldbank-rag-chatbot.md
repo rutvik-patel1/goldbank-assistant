@@ -181,6 +181,9 @@ export const config = {
   HEADING_CAPS_RATIO: 0.6,
   MAX_SENTENCE_HEADING_CHARS: 70,
   MAX_SENTENCE_HEADING_WORDS: 10,
+  MIN_HEADING_LETTERS: 3,
+  MAX_HEADING_UPPER_RATIO: 0.9,
+  MAX_HEADING_WORDS: 14,
 
   // Enrichment
   ENRICHMENT: (process.env.ENRICHMENT ?? 'on') as 'on' | 'off',
@@ -1372,35 +1375,49 @@ export function isNumberedHeading(line: string): boolean {
   return NUMBERED_HEADING.test(line.trim());
 }
 
-/** Shape rules that disqualify a line from being any kind of heading. */
+/**
+ * Shape rules that disqualify a line from being any kind of heading.
+ *
+ * The rules divide in two. STRUCTURAL rules apply to every candidate. STYLE
+ * rules describe prose that merely resembles a heading, and every one of them
+ * is exempted for numbered lines — an explicit `1\. …` marker is a stronger
+ * statement of intent than any style signal, so a numbered heading must not be
+ * vetoed for being bold, question-phrased, colon-bearing, or list-shaped.
+ * Applying the exemption to only some style rules is how a numbered section
+ * ends up silently missing from the recovered tree.
+ *
+ * The exemption is limited to NUMBERED lines on purpose: FAQ questions also end
+ * in "?" and must stay body text, because the Q&A splitter pairs each question
+ * with its answer INSIDE a section rather than treating it as a section title.
+ */
 function passesBaseExclusions(t: string): boolean {
+  const numbered = NUMBERED_HEADING.test(t);
+
+  // --- Structural: never a heading, numbered or not.
   if (t.length === 0 || t.length > config.MAX_HEADING_CHARS) return false;
   if (/^#{1,6}\s/.test(t)) return false;              // already a heading
-  // List item — but a numbered heading (`1\. Title`) looks like one, so exempt it.
-  if (/^\s*([-*+]|\d+[.)])\s/.test(t) && !NUMBERED_HEADING.test(t)) return false;
   if (/^[|>]/.test(t)) return false;                  // table row or blockquote
-  // Terminal punctuation — but a numbered heading may legitimately be phrased as
-  // a question ("3\. How is your personal data collected?"), so exempt it here too.
-  // The exemption is deliberately limited to NUMBERED headings: FAQ questions also
-  // end in "?" and must stay body text, because the Q&A splitter pairs each one
-  // with its answer inside a section rather than treating it as a section title.
-  if (/[.:;!?]$/.test(t) && !NUMBERED_HEADING.test(t)) return false;
-  if (/^\*\*.*\*\*$/.test(t)) return false;           // fully bold = emphasis, not a heading
   if (/^\[.*\]\(.*\)$/.test(t)) return false;         // bare link
   if (/\]\(/.test(t)) return false;                   // contains an inline link
-  if (LABEL_LINE.test(t)) return false;               // `Postal address: …` is contact data
 
   const letters = t.replace(/[^a-zA-Z]/g, '');
-  if (letters.length < 3) return false;
+  if (letters.length < config.MIN_HEADING_LETTERS) return false;
   const upperRatio = letters.replace(/[^A-Z]/g, '').length / letters.length;
-  if (upperRatio > 0.9) return false;                 // SHOUTED emphasis, not a heading
+  if (upperRatio > config.MAX_HEADING_UPPER_RATIO) return false;  // SHOUTED emphasis
+
+  // --- Style: prose that resembles a heading. All exempted for numbered lines.
+  if (numbered) return true;
+  if (/^\s*([-*+]|\d+[.)])\s/.test(t)) return false;  // list item
+  if (/[.:;!?]$/.test(t)) return false;               // terminal punctuation
+  if (/^\*\*.*\*\*$/.test(t)) return false;           // fully bold = emphasis
+  if (LABEL_LINE.test(t)) return false;               // `Postal address: …` is contact data
   return true;
 }
 
 /** Predominantly Title Case, e.g. `Acceptable Use`, `We May Make Changes to Our Site`. */
 function isTitleCaseHeading(t: string): boolean {
   const words = t.split(/\s+/).filter(Boolean);
-  if (words.length > 14) return false;
+  if (words.length > config.MAX_HEADING_WORDS) return false;
   const significant = words.filter((w) => !SMALL_WORDS.has(w.toLowerCase()));
   if (significant.length === 0) return false;
   const capitalized = significant.filter((w) => /^[A-Z]/.test(w)).length;
@@ -1510,7 +1527,10 @@ export function promoteHeadings(markdown: string): {
       const level = !numbered && sawNumberedSection ? '###' : '##';
       out.push(`${level} ${title}`);
       promoted.push(title);
-      if (tocAnchors[key]) anchors[normalizeTitle(title)] = tocAnchors[key];
+      // First write wins: two sections whose titles normalize identically must not
+      // silently overwrite each other's deep-link anchor.
+      const anchorKey = normalizeTitle(title);
+      if (tocAnchors[key] && !anchors[anchorKey]) anchors[anchorKey] = tocAnchors[key];
       continue;
     }
 
