@@ -14,7 +14,8 @@
     "verify:headings": "tsx scripts/verify-headings.ts",
     "verify:chunk": "tsx scripts/verify-chunk.ts",
     "verify:store": "tsx scripts/verify-store.ts",
-    "verify:retrieve": "tsx scripts/verify-retrieve.ts"
+    "verify:retrieve": "tsx scripts/verify-retrieve.ts",
+    "verify:enrich": "tsx scripts/verify-enrich.ts"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.38.0",
