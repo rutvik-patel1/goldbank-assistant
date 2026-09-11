@@ -3698,7 +3698,10 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
     }
   }, [pending]);
 
-  return { turns, pending, error, send, chatId: chatId.current };
+  // NOTE: deliberately does NOT return chatId. Reading `chatId.current` during
+  // render violates react-hooks/refs ("Cannot access ref value during render")
+  // and is a build-blocking lint error. Nothing consumes it.
+  return { turns, pending, error, send };
 }
 ```
 
