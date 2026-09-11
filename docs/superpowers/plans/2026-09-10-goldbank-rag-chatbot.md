@@ -3580,7 +3580,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 ```ts
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Citation } from './types';
 
 export interface RetrievedDebug {
@@ -3642,9 +3642,20 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chatId = useRef<string | null>(null);
+  // `pending` is state, so a second submit fired before React commits the
+  // pending render would pass the guard and corrupt patchLast's "last turn"
+  // target. A ref closes that window synchronously.
+  const sending = useRef(false);
+  // Abort an in-flight stream on unmount: otherwise navigating away keeps the
+  // reader running, keeps calling setState on a dead hook, and keeps burning
+  // the free-tier request budget for a response nobody will see.
+  const abort = useRef<AbortController | null>(null);
+
+  useEffect(() => () => abort.current?.abort(), []);
 
   const send = useCallback(async (question: string) => {
-    if (!question.trim() || pending) return;
+    if (!question.trim() || sending.current) return;
+    sending.current = true;
     setError(null);
     setPending(true);
 
@@ -3662,8 +3673,15 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
       });
 
     try {
+      const controller = new AbortController();
+      abort.current = controller;
+
       if (!chatId.current) {
-        const created = await fetch('/api/chats', { method: 'POST' });
+        const created = await fetch('/api/chats', {
+          method: 'POST',
+          signal: controller.signal,
+        });
+        if (!created.ok) throw new Error(`could not start a conversation (${created.status})`);
         chatId.current = ((await created.json()) as { chat: { id: string } }).chat.id;
       }
 
@@ -3671,6 +3689,7 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ chatId: chatId.current, question }),
+        signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`request failed: ${res.status}`);
 
@@ -3691,12 +3710,14 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
       });
       patchLast({ streaming: false });
     } catch (e) {
-      setError((e as Error).message);
+      // An abort is a deliberate unmount, not an error worth showing.
+      if ((e as Error).name !== 'AbortError') setError((e as Error).message);
       patchLast({ streaming: false });
     } finally {
+      sending.current = false;
       setPending(false);
     }
-  }, [pending]);
+  }, []);
 
   // NOTE: deliberately does NOT return chatId. Reading `chatId.current` during
   // render violates react-hooks/refs ("Cannot access ref value during render")
@@ -3810,15 +3831,78 @@ import { CitationChip } from './CitationChip';
 import { PipelineStrip } from './PipelineStrip';
 import type { UiTurn } from '@/lib/useChatStream';
 
-function renderWithMarkers(text: string) {
-  return text.split(/(\[\d+\])/g).map((part, i) => {
-    const m = /^\[(\d+)\]$/.exec(part);
-    if (!m) return <span key={i}>{part}</span>;
+/**
+ * The model answers in markdown — the system prompt asks for a bulleted list
+ * when the source is a list, and a live answer to "How does the points system
+ * work?" comes back as "* You earn 1 point for every £1...". Rendering only the
+ * citation markers would put literal asterisks on screen for the first seed
+ * question, so handle the small subset of markdown the model actually emits:
+ * unordered lists and bold. Anything else renders as plain text.
+ */
+
+/** Citation markers are one or two digits, matching validateCitations. */
+function renderMarkers(text: string, keyPrefix: string): React.ReactNode[] {
+  return text.split(/(\[\d{1,2}\])/g).map((part, i) => {
+    const m = /^\[(\d{1,2})\]$/.exec(part);
+    if (!m) return <span key={`${keyPrefix}-t${i}`}>{part}</span>;
     return (
-      <sup key={i} className="mx-0.5 rounded bg-gold-soft px-1 text-[0.7em] font-semibold text-gold">
+      <sup
+        key={`${keyPrefix}-m${i}`}
+        className="mx-0.5 rounded bg-gold-soft px-1 text-[0.7em] font-semibold text-gold"
+      >
         {m[1]}
       </sup>
     );
+  });
+}
+
+function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  text.split(/(\*\*[^*]+\*\*)/g).forEach((segment, i) => {
+    const bold = /^\*\*([^*]+)\*\*$/.exec(segment);
+    if (bold) {
+      out.push(
+        <strong key={`${keyPrefix}-b${i}`}>{renderMarkers(bold[1], `${keyPrefix}-b${i}`)}</strong>,
+      );
+    } else if (segment) {
+      out.push(...renderMarkers(segment, `${keyPrefix}-s${i}`));
+    }
+  });
+  return out;
+}
+
+const BULLET = /^\s*[*\-•]\s+/;
+
+function renderAnswer(content: string): React.ReactNode[] {
+  return content.split(/\n{2,}/).flatMap((block, bi) => {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) return [];
+
+    // A block whose every line is a bullet becomes a real list.
+    if (lines.every((l) => BULLET.test(l))) {
+      return [
+        <ul key={`b${bi}`}>
+          {lines.map((l, li) => (
+            <li key={`b${bi}-${li}`}>{renderInline(l.replace(BULLET, ''), `b${bi}-${li}`)}</li>
+          ))}
+        </ul>,
+      ];
+    }
+
+    // A block that opens with prose and continues into bullets: split it.
+    const firstBullet = lines.findIndex((l) => BULLET.test(l));
+    if (firstBullet > 0) {
+      return [
+        <p key={`b${bi}p`}>{renderInline(lines.slice(0, firstBullet).join(' '), `b${bi}p`)}</p>,
+        <ul key={`b${bi}u`}>
+          {lines.slice(firstBullet).map((l, li) => (
+            <li key={`b${bi}u-${li}`}>{renderInline(l.replace(BULLET, ''), `b${bi}u-${li}`)}</li>
+          ))}
+        </ul>,
+      ];
+    }
+
+    return [<p key={`b${bi}`}>{renderInline(block, `b${bi}`)}</p>];
   });
 }
 
@@ -3837,9 +3921,7 @@ export function MessageBubble({ turn }: { turn: UiTurn }) {
     <div>
       <div className="prose-answer max-w-none">
         {turn.content
-          ? turn.content.split(/\n{2,}/).map((para, i) => (
-              <p key={i}>{renderWithMarkers(para)}</p>
-            ))
+          ? renderAnswer(turn.content)
           : turn.streaming && <span className="text-muted">Searching the knowledge base…</span>}
         {turn.streaming && turn.content && (
           <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-gold align-middle" />
@@ -3881,9 +3963,25 @@ export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurn
   const { turns, pending, error, send } = useChatStream(initialTurns);
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
+  // `turns` changes on every streamed token, so auto-scrolling unconditionally
+  // would yank the viewport down many times a second and fight a user who
+  // scrolled up to reread an earlier answer. Only follow the stream while they
+  // are already at the bottom.
+  const stickToBottom = useRef(true);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    const onScroll = () => {
+      const gap = document.body.scrollHeight - (window.scrollY + window.innerHeight);
+      stickToBottom.current = gap < 160; // px of slack, not a knob
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (stickToBottom.current) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
   }, [turns]);
 
   const submit = (text: string) => {
@@ -3893,6 +3991,12 @@ export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurn
 
   return (
     <div className="space-y-6">
+      {turns.length === 0 && readOnly && (
+        <p className="rounded-xl border border-line bg-panel px-4 py-6 text-center text-sm text-muted">
+          This conversation has no messages.
+        </p>
+      )}
+
       {turns.length === 0 && !readOnly && (
         <div className="rounded-2xl border border-line bg-panel p-6">
           <h1 className="text-xl font-semibold">Ask about buying, selling, and shipping gold</h1>
@@ -3940,6 +4044,7 @@ export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurn
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Ask about delivery, payments, returns, points…"
+            aria-label="Ask a question about Gold Bank"
             className="min-w-0 flex-1 bg-transparent px-2 py-2 outline-none"
             disabled={pending}
           />
