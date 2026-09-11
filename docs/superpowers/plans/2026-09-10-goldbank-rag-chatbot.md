@@ -100,6 +100,21 @@ If `create-next-app` refuses because the directory is not empty, it is safe to p
 
 - [ ] **Step 2: Install the project dependencies**
 
+Also add an eslint override so an intentional destructure-to-discard (used to strip
+the `embedding` field before sending chunks to the browser) is not reported:
+
+```js
+// eslint.config.mjs — append to the exported config array
+{
+  rules: {
+    '@typescript-eslint/no-unused-vars': [
+      'warn',
+      { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+    ],
+  },
+}
+```
+
 ```bash
 npm install langchain@^1.5.11 @langchain/core@^1.2.10 @langchain/google-genai@^2.3.1 \
   @lancedb/lancedb@^0.38.0 \
@@ -130,7 +145,11 @@ green from the start.
 
 - [ ] **Step 3: Add npm scripts**
 
-Merge into `package.json`:
+Merge into `package.json`. **Note the `--env-file=.env.local` on every script that
+calls the API.** Next.js auto-loads `.env.local` for `next dev`, but a plain `tsx`
+invocation does not — without the flag `npm run seed` and `npm run check-models` die
+with "Missing GEMINI_API_KEY" even when the key is correctly in place, which breaks the
+README's own quick start. The three offline `verify:*` scripts need no key and omit it.
 
 ```json
 {
@@ -139,14 +158,15 @@ Merge into `package.json`:
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check-models": "tsx scripts/check-models.ts",
-    "seed": "tsx scripts/seed.ts",
-    "smoke": "tsx scripts/smoke.ts",
+    "check-models": "tsx --env-file=.env.local scripts/check-models.ts",
+    "seed": "tsx --env-file=.env.local scripts/seed.ts",
+    "smoke": "tsx --env-file=.env.local scripts/smoke.ts",
     "verify:parse": "tsx scripts/verify-parse.ts",
     "verify:headings": "tsx scripts/verify-headings.ts",
     "verify:chunk": "tsx scripts/verify-chunk.ts",
     "verify:store": "tsx scripts/verify-store.ts",
-    "verify:retrieve": "tsx scripts/verify-retrieve.ts"
+    "verify:retrieve": "tsx --env-file=.env.local scripts/verify-retrieve.ts",
+    "verify:enrich": "tsx --env-file=.env.local scripts/verify-enrich.ts"
   }
 }
 ```
@@ -1539,7 +1559,7 @@ function isSentenceCaseHeading(t: string): boolean {
 
 /**
  * True when a standalone line looks like a section title rendered as body text.
- * Three accepting signals, any of which suffices: numbered, Title Case, or
+ * THREE accepting signals, any of which suffices: numbered, Title Case, or
  * sentence case. All share one set of disqualifying shape rules.
  */
 export function looksLikeHeading(line: string): boolean {
@@ -1550,9 +1570,11 @@ export function looksLikeHeading(line: string): boolean {
 
 /**
  * Reconstruct document structure for pages whose section titles are unmarked
- * paragraphs. Two signals: the leading TOC anchor list (authoritative, and it
- * yields real URL fragments for deep-linked citations) and a Title-Case
- * heuristic for sections the TOC omits.
+ * paragraphs. THREE signals: the leading TOC anchor list (authoritative, and the
+ * source of the URL fragments behind deep-linked citations — though only Terms of
+ * Service publishes one), numbered sections (`1.`…`10.`, how the privacy policy
+ * marks its top level), and a tight sentence-case heuristic for the subsections
+ * the other two miss.
  */
 export function promoteHeadings(markdown: string): {
   markdown: string;
@@ -2558,8 +2580,11 @@ async function ingestDoc(
     return { documentId, chunks: embedded.length };
   } catch (e) {
     const message = (e as Error).message;
-    await patchDocument(documentId, { status: 'failed', error: message });
+    // Delete the vectors FIRST. If the manifest write were to fail after a
+    // successful patch, vectors would survive under a document the manifest no
+    // longer describes as in-flight — the harder state to detect and recover.
     await store.deleteByDocument(documentId); // never leave a half-indexed document
+    await patchDocument(documentId, { status: 'failed', error: message });
     emit({ type: 'error', documentId, message });
     return { documentId, chunks: 0, error: message };
   }
@@ -3266,7 +3291,19 @@ import { nanoid } from 'nanoid';
 import { paths } from './config';
 import type { ChatSession, ChatTurn } from './types';
 
+/**
+ * Chat ids come straight from a URL path segment (`/c/<id>`, `/api/chats/<id>`),
+ * so they must be validated before touching the filesystem. Without this,
+ * `getChat('../../package')` joins out of ./data/chats and returns the contents
+ * of any JSON-parseable file reachable by traversal — an unauthenticated file
+ * read. The alphabet below is nanoid's default set, which is what createChat emits.
+ */
+const CHAT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 function file(id: string): string {
+  if (!CHAT_ID.test(id)) {
+    throw new Error(`invalid chat id: ${JSON.stringify(id.slice(0, 32))}`);
+  }
   return join(paths.chats, `${id}.json`);
 }
 
@@ -3290,6 +3327,8 @@ export async function createChat(): Promise<ChatSession> {
 }
 
 export async function getChat(id: string): Promise<ChatSession | null> {
+  // An invalid id throws inside file(); treat it the same as "not found" so
+  // callers render a 404 rather than surfacing an error.
   try {
     return JSON.parse(await readFile(file(id), 'utf8')) as ChatSession;
   } catch {
