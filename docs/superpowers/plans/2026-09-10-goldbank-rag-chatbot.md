@@ -4575,6 +4575,11 @@ Notable knobs:
 
 | Variable | Default | Effect |
 |---|---|---|
+**Deep links are limited by the source.** Only *Terms of Service* publishes in-page anchors on
+goldbank.co.uk, so only its citations deep-link to an exact section (23 of its 26 chunks carry one).
+Citations from the other eight documents link to the page. Nothing is fabricated — a citation
+without an anchor simply omits it.
+
 | `GEMINI_CHAT_MODEL` | `gemini-3.1-flash-lite` | Generation, condensation, enrichment |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Vectors |
 | `EMBEDDING_DIMENSIONS` | `768` | Truncated and re-normalized |
