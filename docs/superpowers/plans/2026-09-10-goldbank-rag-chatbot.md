@@ -17,7 +17,14 @@
 - **Every route handler must declare `export const runtime = 'nodejs'`.** LanceDB and the file parsers use native modules; the Edge runtime will fail at import time.
 - **Generation, condensation, and enrichment model:** `gemini-3.1-flash-lite`. Never hardcode this string outside `lib/config.ts`.
 - **Embedding model:** `gemini-embedding-001` at **768 dimensions**. Both the ingest path and the query path must use the identical model and dimensionality; a mismatch is a silent retrieval failure.
-- **`lib/config.ts` is the only place tunables are defined.** No magic numbers or model names elsewhere.
+- **`lib/config.ts` is the only place tunables are defined.** A *tunable* is any value an operator
+  might reasonably change to alter behaviour: model names, dimensions, thresholds, budgets, batch
+  sizes, concurrency, retry counts, score weights, and window sizes. Those must live in `config.ts`
+  and be referenced from it — never inlined.
+  Values that are **not** tunables may stay inline: display/formatting constants (a snippet's
+  display length), internal accounting allowances, sanity floors, and framework-mandated literals
+  (Next.js route-segment exports such as `runtime` and `maxDuration` must be statically analysable
+  and cannot be imported). When inlining one, add a brief comment saying why it is not a knob.
 - **Everything under `./data/` is derived output and gitignored.** `knowledge-base/goldbank/*.json` is committed source data.
 - **Only `lib/store/index.ts` and `lib/store/*.ts` may import `@lancedb/lancedb`.** All other code depends on the `VectorStore` interface from `lib/store/types.ts`.
 - **Answer-time context contains verbatim chunk text only.** Enrichment output (summaries, hypothetical questions) is embedded but must never be shown to the generation model as if it were source material.
@@ -222,6 +229,12 @@ export const config = {
   TOP_K: int('TOP_K', 8),
   MIN_SCORE: Number(process.env.MIN_SCORE ?? 0.55),
   CONTEXT_TOKEN_BUDGET: int('CONTEXT_TOKEN_BUDGET', 6000),
+  /** Siblings pulled in by expansion score slightly below the hit that found them. */
+  SIBLING_SCORE_DISCOUNT: Number(process.env.SIBLING_SCORE_DISCOUNT ?? 0.95),
+  /** How many prior turns condensation may look back over. */
+  CONDENSE_HISTORY_TURNS: int('CONDENSE_HISTORY_TURNS', 6),
+  /** Characters of verbatim text carried in a citation for the UI to preview. */
+  CITATION_SNIPPET_CHARS: int('CITATION_SNIPPET_CHARS', 400),
 
   // Upload
   MAX_UPLOAD_BYTES: int('MAX_UPLOAD_BYTES', 20 * 1024 * 1024),
@@ -1024,7 +1037,10 @@ function deriveTitle(
   const scraped = String(meta.title ?? '')
     .replace(/\s*\|\s*Gold Bank\s*$/i, '')
     .trim();
-  // Reject the site-wide default; it identifies nothing.
+  // Reject the site-wide default. The optional "- London" suffix means a bare
+  // "Gold Bank" is rejected too, and that is deliberate: the brand name alone
+  // identifies no document, so the URL slug below ("Cookies Policy" from
+  // /legal/cookies-policy) is strictly more useful to a reader than "Gold Bank".
   if (scraped && !/^gold bank(\s*[-–|]\s*london)?$/i.test(scraped)) return scraped;
 
   // Last resort: humanise the URL slug, else the filename.
@@ -2933,7 +2949,7 @@ export async function condenseQuery(turns: ChatTurn[], question: string): Promis
   if (history.length === 0) return question;
 
   const rendered = history
-    .slice(-6)
+    .slice(-config.CONDENSE_HISTORY_TURNS)
     .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content.slice(0, 500)}`)
     .join('\n');
 
@@ -2980,7 +2996,7 @@ async function expandSiblings(hits: ScoredChunk[]): Promise<ScoredChunk[]> {
     for (const s of siblings) {
       if (byId.has(s.id)) continue;
       // Siblings inherit a slightly discounted score so ordering stays sensible.
-      byId.set(s.id, { ...s, score: hit.score * 0.95 });
+      byId.set(s.id, { ...s, score: hit.score * config.SIBLING_SCORE_DISCOUNT });
     }
   }
   return [...byId.values()];
@@ -3025,17 +3041,20 @@ export function buildContext(chunks: ScoredChunk[]): { context: string; citation
   const kept: ScoredChunk[] = [];
   let tokens = 0;
   for (const c of ranked) {
-    const t = countTokens(c.text) + 40; // header allowance
+    // +40 is the numbered-header allowance, not a knob: it tracks the block format below.
+    const t = countTokens(c.text) + 40;
     if (tokens + t > config.CONTEXT_TOKEN_BUDGET && kept.length > 0) continue;
     kept.push(c);
     tokens += t;
   }
 
-  kept.sort((a, b) =>
-    a.documentId === b.documentId
-      ? a.ordinal - b.ordinal
-      : a.sourceTitle.localeCompare(b.sourceTitle),
-  );
+  // Group by document, then read in original order. documentId is the final
+  // discriminator so this is a total order even if two documents shared a title.
+  kept.sort((a, b) => {
+    if (a.documentId === b.documentId) return a.ordinal - b.ordinal;
+    const byTitle = a.sourceTitle.localeCompare(b.sourceTitle);
+    return byTitle !== 0 ? byTitle : a.documentId.localeCompare(b.documentId);
+  });
 
   const citations: Citation[] = [];
   const blocks: string[] = [];
@@ -3054,7 +3073,7 @@ export function buildContext(chunks: ScoredChunk[]): { context: string; citation
       headingPath: c.headingPath,
       sourceUrl: c.sourceUrl,
       anchor: c.anchor,
-      snippet: c.text.slice(0, 400),
+      snippet: c.text.slice(0, config.CITATION_SNIPPET_CHARS),
     });
   });
 
