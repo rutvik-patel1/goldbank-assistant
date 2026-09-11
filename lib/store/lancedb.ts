@@ -1,7 +1,7 @@
 import * as lancedb from '@lancedb/lancedb';
 import type { VectorQuery } from '@lancedb/lancedb';
 import { mkdir } from 'node:fs/promises';
-import { config, paths } from '../config';
+import { paths } from '../config';
 import type { EmbeddedChunk, ScoredChunk } from '../types';
 import { fromRow, toRow, type SearchFilter, type StoreRow, type VectorStore } from './types';
 

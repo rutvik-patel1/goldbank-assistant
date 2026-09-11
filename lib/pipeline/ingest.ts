@@ -87,8 +87,11 @@ async function ingestDoc(
     return { documentId, chunks: embedded.length };
   } catch (e) {
     const message = (e as Error).message;
-    await patchDocument(documentId, { status: 'failed', error: message });
+    // Delete the vectors FIRST. If the manifest write were to fail after a
+    // successful patch, vectors would survive under a document the manifest no
+    // longer describes as in-flight — the harder state to detect and recover.
     await store.deleteByDocument(documentId); // never leave a half-indexed document
+    await patchDocument(documentId, { status: 'failed', error: message });
     emit({ type: 'error', documentId, message });
     return { documentId, chunks: 0, error: message };
   }

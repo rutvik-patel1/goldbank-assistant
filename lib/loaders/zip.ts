@@ -1,5 +1,4 @@
 import unzipper from 'unzipper';
-import type { ParsedDoc } from '../../lib/types';
 
 /** Expand a zip in memory. Returns [filename, buffer] for each regular file. */
 export async function expandZip(buf: Buffer): Promise<[string, Buffer][]> {

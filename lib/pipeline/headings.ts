@@ -124,9 +124,9 @@ export function looksLikeHeading(line: string): boolean {
 
 /**
  * Reconstruct document structure for pages whose section titles are unmarked
- * paragraphs. Two signals: the leading TOC anchor list (authoritative, and it
- * yields real URL fragments for deep-linked citations) and a Title-Case
- * heuristic for sections the TOC omits.
+ * paragraphs. The leading TOC anchor list is authoritative (and yields real
+ * URL fragments for deep-linked citations); sections it omits fall back to
+ * `looksLikeHeading`'s three signals — numbered, Title Case, or sentence case.
  */
 export function promoteHeadings(markdown: string): {
   markdown: string;

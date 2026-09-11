@@ -17,6 +17,13 @@ npm run seed                   # ingest the bundled corpus (~2 min, enrichment)
 npm run dev                    # http://localhost:3000
 ```
 
+`check-models`, `seed`, and `smoke` all load `.env.local` themselves — each is
+wired up with `tsx --env-file=.env.local` in `package.json` — so the sequence
+above works exactly as written; there is no separate env-loading step to add.
+`serverExternalPackages` (for `@lancedb/lancedb` and `unzipper`) and
+`apache-arrow` are already committed, so `npm install` alone is enough for a
+fresh clone.
+
 ## Why this corpus needed a custom pipeline
 
 Nine of the ten scraped pages contain exactly **one** markdown heading. Their

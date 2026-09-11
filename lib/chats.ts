@@ -4,7 +4,19 @@ import { nanoid } from 'nanoid';
 import { paths } from './config';
 import type { ChatSession, ChatTurn } from './types';
 
+/**
+ * Chat ids come straight from a URL path segment (`/c/<id>`, `/api/chats/<id>`),
+ * so they must be validated before touching the filesystem. Without this,
+ * `getChat('../../package')` joins out of ./data/chats and returns the contents
+ * of any JSON-parseable file reachable by traversal — an unauthenticated file
+ * read. The alphabet below is nanoid's default set, which is what createChat emits.
+ */
+const CHAT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 function file(id: string): string {
+  if (!CHAT_ID.test(id)) {
+    throw new Error(`invalid chat id: ${JSON.stringify(id.slice(0, 32))}`);
+  }
   return join(paths.chats, `${id}.json`);
 }
 
@@ -28,6 +40,8 @@ export async function createChat(): Promise<ChatSession> {
 }
 
 export async function getChat(id: string): Promise<ChatSession | null> {
+  // An invalid id throws inside file(); treat it the same as "not found" so
+  // callers render a 404 rather than surfacing an error.
   try {
     return JSON.parse(await readFile(file(id), 'utf8')) as ChatSession;
   } catch {
