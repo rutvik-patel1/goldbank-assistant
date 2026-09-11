@@ -4755,10 +4755,13 @@ By using our site, you confirm that you accept these terms…
 ```
 
 A stock markdown splitter turns the 28 KB privacy policy into one blob cut at
-arbitrary offsets. So `lib/pipeline/headings.ts` reconstructs the tree first,
-using two signals: the table-of-contents anchor list each page opens with
-(authoritative, and it yields real URL fragments for deep-linked citations),
-and a Title-Case heuristic for sections the TOC omits.
+arbitrary offsets. So `lib/pipeline/headings.ts` reconstructs the tree first, using three
+signals: the table-of-contents anchor list (authoritative, and the source of the
+URL fragments behind deep-linked citations — though only Terms of Service
+publishes one), **numbered sections** (`1.`…`10.`, how the privacy policy marks
+its top level), and a tight sentence-case heuristic for subsections the other two
+miss. Title Case alone recovered 6 of the privacy policy's 27 sections; all three
+together recover all 27 (11 `h2` + 16 `h3`).
 
 Chunking then dispatches on content shape — atomic question+answer chunks for
 the FAQ page, section chunks for legal text, and a table guard that never cuts
@@ -4796,11 +4799,6 @@ Notable knobs:
 
 | Variable | Default | Effect |
 |---|---|---|
-**Deep links are limited by the source.** Only *Terms of Service* publishes in-page anchors on
-goldbank.co.uk, so only its citations deep-link to an exact section (23 of its 26 chunks carry one).
-Citations from the other eight documents link to the page. Nothing is fabricated — a citation
-without an anchor simply omits it.
-
 | `GEMINI_CHAT_MODEL` | `gemini-3.1-flash-lite` | Generation, condensation, enrichment |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Vectors |
 | `EMBEDDING_DIMENSIONS` | `768` | Truncated and re-normalized |
@@ -4808,6 +4806,11 @@ without an anchor simply omits it.
 | `ENRICHMENT` | `on` | `off` skips the LLM enrichment stage |
 | `TOP_K` | `8` | Candidates retrieved |
 | `MIN_SCORE` | `0.55` | Below this, the bot refuses instead of guessing |
+
+**Deep links are limited by the source.** Only *Terms of Service* publishes in-page anchors on
+goldbank.co.uk, so only its citations deep-link to an exact section (23 of its 26 chunks carry one).
+Citations from the other eight documents link to the page. Nothing is fabricated — a citation
+without an anchor simply omits it.
 
 The enrichment cache key includes each chunk's heading path, whose first element is the document
 title. So changing title derivation, heading recovery, or chunking invalidates the cache and forces
