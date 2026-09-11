@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Citation } from './types';
 
 export interface RetrievedDebug {
@@ -62,9 +62,20 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const chatId = useRef<string | null>(null);
+  // `pending` is state, so a second submit fired before React commits the
+  // pending render would pass the guard and corrupt patchLast's "last turn"
+  // target. A ref closes that window synchronously.
+  const sending = useRef(false);
+  // Abort an in-flight stream on unmount: otherwise navigating away keeps the
+  // reader running, keeps calling setState on a dead hook, and keeps burning
+  // the free-tier request budget for a response nobody will see.
+  const abort = useRef<AbortController | null>(null);
+
+  useEffect(() => () => abort.current?.abort(), []);
 
   const send = useCallback(async (question: string) => {
-    if (!question.trim() || pending) return;
+    if (!question.trim() || sending.current) return;
+    sending.current = true;
     setError(null);
     setPending(true);
 
@@ -82,8 +93,15 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
       });
 
     try {
+      const controller = new AbortController();
+      abort.current = controller;
+
       if (!chatId.current) {
-        const created = await fetch('/api/chats', { method: 'POST' });
+        const created = await fetch('/api/chats', {
+          method: 'POST',
+          signal: controller.signal,
+        });
+        if (!created.ok) throw new Error(`could not start a conversation (${created.status})`);
         chatId.current = ((await created.json()) as { chat: { id: string } }).chat.id;
       }
 
@@ -91,6 +109,7 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ chatId: chatId.current, question }),
+        signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`request failed: ${res.status}`);
 
@@ -111,19 +130,17 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
       });
       patchLast({ streaming: false });
     } catch (e) {
-      setError((e as Error).message);
+      // An abort is a deliberate unmount, not an error worth showing.
+      if ((e as Error).name !== 'AbortError') setError((e as Error).message);
       patchLast({ streaming: false });
     } finally {
+      sending.current = false;
       setPending(false);
     }
-  }, [pending]);
+  }, []);
 
-  // NOTE: deliberately not returning chatId here. The brief's original code
-  // returned `chatId: chatId.current`, which reads a ref's .current during
-  // render/return — `npm run lint` flags this as a react-hooks/refs error
-  // ("Cannot access ref value during render"). Nothing consumes this field
-  // (ChatPanel destructures only turns/pending/error/send, and the documented
-  // hook contract is `{ turns, pending, send, meta, error }`), so it's dropped
-  // rather than papered over with a lint-suppression comment.
+  // NOTE: deliberately does NOT return chatId. Reading `chatId.current` during
+  // render violates react-hooks/refs ("Cannot access ref value during render")
+  // and is a build-blocking lint error. Nothing consumes it.
   return { turns, pending, error, send };
 }

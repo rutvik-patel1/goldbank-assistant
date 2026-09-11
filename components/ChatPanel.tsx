@@ -15,9 +15,25 @@ export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurn
   const { turns, pending, error, send } = useChatStream(initialTurns);
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
+  // `turns` changes on every streamed token, so auto-scrolling unconditionally
+  // would yank the viewport down many times a second and fight a user who
+  // scrolled up to reread an earlier answer. Only follow the stream while they
+  // are already at the bottom.
+  const stickToBottom = useRef(true);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    const onScroll = () => {
+      const gap = document.body.scrollHeight - (window.scrollY + window.innerHeight);
+      stickToBottom.current = gap < 160; // px of slack, not a knob
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (stickToBottom.current) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
   }, [turns]);
 
   const submit = (text: string) => {
@@ -27,6 +43,12 @@ export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurn
 
   return (
     <div className="space-y-6">
+      {turns.length === 0 && readOnly && (
+        <p className="rounded-xl border border-line bg-panel px-4 py-6 text-center text-sm text-muted">
+          This conversation has no messages.
+        </p>
+      )}
+
       {turns.length === 0 && !readOnly && (
         <div className="rounded-2xl border border-line bg-panel p-6">
           <h1 className="text-xl font-semibold">Ask about buying, selling, and shipping gold</h1>
@@ -74,6 +96,7 @@ export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurn
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Ask about delivery, payments, returns, points…"
+            aria-label="Ask a question about Gold Bank"
             className="min-w-0 flex-1 bg-transparent px-2 py-2 outline-none"
             disabled={pending}
           />
