@@ -63,7 +63,7 @@
 | `lib/rag/context.ts` | Dedupe, order, token budget, numbered context blocks |
 | `lib/rag/answer.ts` | System prompt, streaming generation, citation extraction and validation |
 | `app/api/*/route.ts` | HTTP surface only — thin wrappers over `lib/` |
-| `app/page.tsx`, `app/knowledge/page.tsx`, `app/c/[id]/page.tsx` | The three UI routes |
+| `app/page.tsx`, `app/knowledge/page.tsx`, `app/c/[id]/page.tsx` | The three UI routes (`/knowledge` is a server shell over `components/KnowledgeClient.tsx`) |
 | `components/*.tsx` | Presentational pieces: message list, citation chip, pipeline strip, upload zone, document row |
 | `scripts/check-models.ts` | Verify configured Gemini model IDs against the live ListModels response |
 | `scripts/verify-*.ts` | Per-task verification harnesses run against real corpus fixtures |
@@ -4142,6 +4142,17 @@ export function useIngest(onFinished: () => void) {
     const form = new FormData();
     files.forEach((f) => form.append('files', f));
 
+    // The server keys its first event for a file by FILENAME, then switches to the
+    // server-assigned documentId once a manifest record exists. Naively keying rows
+    // by whatever id arrives leaves an orphaned row frozen at "parsing" under the
+    // filename plus a second row labelled with a raw nanoid. So track the file being
+    // processed and migrate its row onto the real id exactly once — while still
+    // allowing a .zip to open ADDITIONAL rows for the further documents inside it.
+    const fileNames = new Set(files.map((f) => f.name));
+    let fileLabel = files[0]?.name ?? 'document';
+    let activeKey = fileLabel;
+    let migrated = false;
+
     try {
       const res = await fetch('/api/ingest', { method: 'POST', body: form });
       if (!res.ok) {
@@ -4153,7 +4164,6 @@ export function useIngest(onFinished: () => void) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let current = files[0]?.name ?? 'document';
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -4168,31 +4178,54 @@ export function useIngest(onFinished: () => void) {
           const dataLine = /^data:\s*(.*)$/m.exec(frame)?.[1];
           if (!event || dataLine === undefined) continue;
 
-          const data = JSON.parse(dataLine) as {
+          let data: {
             documentId?: string; stage?: string; done?: number; total?: number;
             chunks?: number; message?: string; reason?: string; ms?: number;
           };
-          // The server keys events by documentId once a record exists; before
-          // that it keys by filename. Track whichever arrives.
-          const key = data.documentId ?? current;
-          current = key;
+          try {
+            data = JSON.parse(dataLine);
+          } catch {
+            continue; // skip one malformed frame rather than abandoning the stream
+          }
+
+          // A filename-keyed event means the server has started a new file.
+          if (data.documentId && fileNames.has(data.documentId)) {
+            fileLabel = data.documentId;
+            activeKey = data.documentId;
+            migrated = false;
+          }
+          const key = data.documentId ?? activeKey;
 
           setProgress((p) => {
-            const prev = p[key] ?? { label: key, stage: 'queued' };
+            const next = { ...p };
+            let prev = next[key];
+            if (!prev) {
+              // First real documentId for this file: carry the filename row over.
+              if (!migrated && next[activeKey]) {
+                prev = next[activeKey];
+                delete next[activeKey];
+                migrated = true;
+              } else {
+                // A further document from the same upload (e.g. inside a zip).
+                prev = { label: fileLabel, stage: 'queued' };
+              }
+            }
+
             if (event === 'status') {
-              return { ...p, [key]: { ...prev, stage: data.stage ?? prev.stage, done: data.done, total: data.total, chunks: data.chunks ?? prev.chunks } };
+              next[key] = { ...prev, stage: data.stage ?? prev.stage, done: data.done, total: data.total, chunks: data.chunks ?? prev.chunks };
+            } else if (event === 'done') {
+              next[key] = { ...prev, stage: 'ready', chunks: data.chunks, finishedMs: data.ms };
+            } else if (event === 'skipped') {
+              next[key] = { ...prev, stage: 'skipped', skipped: data.reason };
+            } else if (event === 'error') {
+              next[key] = { ...prev, stage: 'failed', error: data.message };
+            } else {
+              return p;
             }
-            if (event === 'done') {
-              return { ...p, [key]: { ...prev, stage: 'ready', chunks: data.chunks, finishedMs: data.ms } };
-            }
-            if (event === 'skipped') {
-              return { ...p, [key]: { ...prev, stage: 'skipped', skipped: data.reason } };
-            }
-            if (event === 'error') {
-              return { ...p, [key]: { ...prev, stage: 'failed', error: data.message } };
-            }
-            return p;
+            return next;
           });
+
+          activeKey = key;
         }
       }
     } catch (e) {
@@ -4213,6 +4246,7 @@ export function useIngest(onFinished: () => void) {
 'use client';
 
 import { useRef, useState } from 'react';
+import { config } from '@/lib/config';
 import type { StageProgress } from '@/lib/useIngest';
 
 const STAGES = ['parsing', 'chunking', 'enriching', 'embedding', 'ready'];
@@ -4296,7 +4330,7 @@ export function UploadZone({
           type="file"
           multiple
           hidden
-          accept=".pdf,.docx,.md,.txt,.html,.htm,.json,.zip"
+          accept={config.SUPPORTED_EXTENSIONS.join(',')}
           onChange={(e) => onUpload([...(e.target.files ?? [])])}
         />
       </div>
@@ -4357,16 +4391,31 @@ export function DocumentRow({
     }
   };
 
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
   const remove = async () => {
     if (!confirm(`Remove "${doc.title}" and its ${doc.chunkCount} chunks from the index?`)) return;
-    await fetch(`/api/documents/${encodeURIComponent(doc.id)}`, { method: 'DELETE' });
-    onDeleted();
+    setRemoveError(null);
+    try {
+      const res = await fetch(`/api/documents/${encodeURIComponent(doc.id)}`, { method: 'DELETE' });
+      // Without this check a failed delete is indistinguishable from a successful
+      // one: the list refreshes from server truth and the row simply stays.
+      if (!res.ok) throw new Error(`delete failed (${res.status})`);
+      onDeleted();
+    } catch (e) {
+      setRemoveError((e as Error).message);
+    }
   };
 
   return (
     <div className="rounded-xl border border-line bg-panel">
       <div className="flex items-center gap-3 px-4 py-3">
-        <button type="button" onClick={toggle} className="min-w-0 flex-1 text-left">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className="min-w-0 flex-1 text-left"
+        >
           <div className="truncate font-medium">{doc.title}</div>
           <div className="truncate text-xs text-muted">
             {doc.status === 'ready' ? `${doc.chunkCount} chunks` : doc.status}
@@ -4385,6 +4434,10 @@ export function DocumentRow({
           Remove
         </button>
       </div>
+
+      {removeError && (
+        <p className="border-t border-line px-4 py-2 text-xs text-gold">{removeError}</p>
+      )}
 
       {open && (
         <div className="space-y-2 border-t border-line px-4 py-3">
@@ -4423,29 +4476,66 @@ export function DocumentRow({
 }
 ```
 
-- [ ] **Step 4: Write `app/knowledge/page.tsx`**
+- [ ] **Step 4: Write `app/knowledge/page.tsx` (server) and `components/KnowledgeClient.tsx` (client)**
+
+The page is split deliberately. A single client component would have to load its first
+data in an effect, and `useEffect(() => { void refresh(); }, [refresh])` trips
+`react-hooks/set-state-in-effect` — a real lint failure, not a style preference. A server
+shell also renders the true counts into the HTML, so the page is correct before hydration
+and verifiable with `curl`.
 
 ```tsx
+// app/knowledge/page.tsx  (server component)
+import { listDocuments } from '@/lib/manifest';
+import { getStore } from '@/lib/store';
+import { KnowledgeClient } from '@/components/KnowledgeClient';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic'; // the index changes underneath this page
+
+export default async function KnowledgePage() {
+  // Read lib/ directly rather than fetching our own API: this is the server.
+  const [documents, store] = await Promise.all([listDocuments(), getStore()]);
+  const vectorCount = await store.count();
+
+  return (
+    <KnowledgeClient
+      initialDocuments={[...documents].sort((a, b) => b.createdAt.localeCompare(a.createdAt))}
+      initialVectorCount={vectorCount}
+    />
+  );
+}
+```
+
+```tsx
+// components/KnowledgeClient.tsx  (client component)
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { DocumentRow } from '@/components/DocumentRow';
 import { UploadZone } from '@/components/UploadZone';
 import { useIngest } from '@/lib/useIngest';
 import type { DocumentRecord } from '@/lib/types';
 
-export default function KnowledgePage() {
-  const [docs, setDocs] = useState<DocumentRecord[]>([]);
-  const [vectorCount, setVectorCount] = useState(0);
+export function KnowledgeClient({
+  initialDocuments,
+  initialVectorCount,
+}: {
+  initialDocuments: DocumentRecord[];
+  initialVectorCount: number;
+}) {
+  // Seeded from the server render, so there is no initial fetch-in-effect.
+  const [docs, setDocs] = useState<DocumentRecord[]>(initialDocuments);
+  const [vectorCount, setVectorCount] = useState(initialVectorCount);
 
+  // Called after an upload finishes or a document is deleted — an event, not a mount.
   const refresh = useCallback(async () => {
     const res = await fetch('/api/documents');
+    if (!res.ok) return;
     const body = (await res.json()) as { documents: DocumentRecord[]; vectorCount: number };
     setDocs(body.documents);
     setVectorCount(body.vectorCount);
   }, []);
-
-  useEffect(() => { void refresh(); }, [refresh]);
 
   const { upload, progress, busy, error } = useIngest(refresh);
 
@@ -4483,7 +4573,7 @@ npm run dev   # open http://localhost:3000/knowledge
 ```
 
 Check by hand:
-1. The header reads `9 documents · <N> indexed chunks`, matching the seed output. (The 404 returns-and-exchanges page is correctly absent — it is refused at parse time.)
+1. The header reads `9 documents · <N> indexed chunks`, matching the seed output — and because the shell is a server component, `curl -s localhost:3000/knowledge | grep -o '9 documents[^<]*'` shows the real counts in the pre-hydration HTML. (The 404 returns-and-exchanges page is correctly absent — it is refused at parse time.)
 2. Expanding `Frequently Asked Questions` lists chunks with **qa** badges, each showing one question and its answer, plus enrichment (`Summary`, `Also answers`, `Keywords`).
 3. Expanding `Terms of Service` shows **clause** badges with recovered breadcrumbs like `Terms of Service › Acceptable Use` and `#tos-acceptable-use` anchors — visible proof that heading recovery worked.
 4. Expanding `Cookies Policy` shows at least one **table** badge whose text contains an intact markdown table.
