@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { config } from '@/lib/config';
 import type { StageProgress } from '@/lib/useIngest';
 
 const STAGES = ['parsing', 'chunking', 'enriching', 'embedding', 'ready'];
@@ -84,7 +85,7 @@ export function UploadZone({
           type="file"
           multiple
           hidden
-          accept=".pdf,.docx,.md,.txt,.html,.htm,.json,.zip"
+          accept={config.SUPPORTED_EXTENSIONS.join(',')}
           onChange={(e) => onUpload([...(e.target.files ?? [])])}
         />
       </div>

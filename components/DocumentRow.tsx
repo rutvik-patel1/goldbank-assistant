@@ -32,16 +32,31 @@ export function DocumentRow({
     }
   };
 
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
   const remove = async () => {
     if (!confirm(`Remove "${doc.title}" and its ${doc.chunkCount} chunks from the index?`)) return;
-    await fetch(`/api/documents/${encodeURIComponent(doc.id)}`, { method: 'DELETE' });
-    onDeleted();
+    setRemoveError(null);
+    try {
+      const res = await fetch(`/api/documents/${encodeURIComponent(doc.id)}`, { method: 'DELETE' });
+      // Without this check a failed delete is indistinguishable from a successful
+      // one: the list refreshes from server truth and the row simply stays.
+      if (!res.ok) throw new Error(`delete failed (${res.status})`);
+      onDeleted();
+    } catch (e) {
+      setRemoveError((e as Error).message);
+    }
   };
 
   return (
     <div className="rounded-xl border border-line bg-panel">
       <div className="flex items-center gap-3 px-4 py-3">
-        <button type="button" onClick={toggle} className="min-w-0 flex-1 text-left">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          className="min-w-0 flex-1 text-left"
+        >
           <div className="truncate font-medium">{doc.title}</div>
           <div className="truncate text-xs text-muted">
             {doc.status === 'ready' ? `${doc.chunkCount} chunks` : doc.status}
@@ -60,6 +75,10 @@ export function DocumentRow({
           Remove
         </button>
       </div>
+
+      {removeError && (
+        <p className="border-t border-line px-4 py-2 text-xs text-gold">{removeError}</p>
+      )}
 
       {open && (
         <div className="space-y-2 border-t border-line px-4 py-3">

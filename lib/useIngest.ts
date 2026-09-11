@@ -29,6 +29,17 @@ export function useIngest(onFinished: () => void) {
     const form = new FormData();
     files.forEach((f) => form.append('files', f));
 
+    // The server keys its first event for a file by FILENAME, then switches to the
+    // server-assigned documentId once a manifest record exists. Naively keying rows
+    // by whatever id arrives leaves an orphaned row frozen at "parsing" under the
+    // filename plus a second row labelled with a raw nanoid. So track the file being
+    // processed and migrate its row onto the real id exactly once — while still
+    // allowing a .zip to open ADDITIONAL rows for the further documents inside it.
+    const fileNames = new Set(files.map((f) => f.name));
+    let fileLabel = files[0]?.name ?? 'document';
+    let activeKey = fileLabel;
+    let migrated = false;
+
     try {
       const res = await fetch('/api/ingest', { method: 'POST', body: form });
       if (!res.ok) {
@@ -40,7 +51,6 @@ export function useIngest(onFinished: () => void) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let current = files[0]?.name ?? 'document';
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -55,31 +65,54 @@ export function useIngest(onFinished: () => void) {
           const dataLine = /^data:\s*(.*)$/m.exec(frame)?.[1];
           if (!event || dataLine === undefined) continue;
 
-          const data = JSON.parse(dataLine) as {
+          let data: {
             documentId?: string; stage?: string; done?: number; total?: number;
             chunks?: number; message?: string; reason?: string; ms?: number;
           };
-          // The server keys events by documentId once a record exists; before
-          // that it keys by filename. Track whichever arrives.
-          const key = data.documentId ?? current;
-          current = key;
+          try {
+            data = JSON.parse(dataLine);
+          } catch {
+            continue; // skip one malformed frame rather than abandoning the stream
+          }
+
+          // A filename-keyed event means the server has started a new file.
+          if (data.documentId && fileNames.has(data.documentId)) {
+            fileLabel = data.documentId;
+            activeKey = data.documentId;
+            migrated = false;
+          }
+          const key = data.documentId ?? activeKey;
 
           setProgress((p) => {
-            const prev = p[key] ?? { label: key, stage: 'queued' };
+            const next = { ...p };
+            let prev = next[key];
+            if (!prev) {
+              // First real documentId for this file: carry the filename row over.
+              if (!migrated && next[activeKey]) {
+                prev = next[activeKey];
+                delete next[activeKey];
+                migrated = true;
+              } else {
+                // A further document from the same upload (e.g. inside a zip).
+                prev = { label: fileLabel, stage: 'queued' };
+              }
+            }
+
             if (event === 'status') {
-              return { ...p, [key]: { ...prev, stage: data.stage ?? prev.stage, done: data.done, total: data.total, chunks: data.chunks ?? prev.chunks } };
+              next[key] = { ...prev, stage: data.stage ?? prev.stage, done: data.done, total: data.total, chunks: data.chunks ?? prev.chunks };
+            } else if (event === 'done') {
+              next[key] = { ...prev, stage: 'ready', chunks: data.chunks, finishedMs: data.ms };
+            } else if (event === 'skipped') {
+              next[key] = { ...prev, stage: 'skipped', skipped: data.reason };
+            } else if (event === 'error') {
+              next[key] = { ...prev, stage: 'failed', error: data.message };
+            } else {
+              return p;
             }
-            if (event === 'done') {
-              return { ...p, [key]: { ...prev, stage: 'ready', chunks: data.chunks, finishedMs: data.ms } };
-            }
-            if (event === 'skipped') {
-              return { ...p, [key]: { ...prev, stage: 'skipped', skipped: data.reason } };
-            }
-            if (event === 'error') {
-              return { ...p, [key]: { ...prev, stage: 'failed', error: data.message } };
-            }
-            return p;
+            return next;
           });
+
+          activeKey = key;
         }
       }
     } catch (e) {
