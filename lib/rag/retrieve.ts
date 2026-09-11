@@ -25,7 +25,7 @@ async function expandSiblings(hits: ScoredChunk[]): Promise<ScoredChunk[]> {
     for (const s of siblings) {
       if (byId.has(s.id)) continue;
       // Siblings inherit a slightly discounted score so ordering stays sensible.
-      byId.set(s.id, { ...s, score: hit.score * 0.95 });
+      byId.set(s.id, { ...s, score: hit.score * config.SIBLING_SCORE_DISCOUNT });
     }
   }
   return [...byId.values()];

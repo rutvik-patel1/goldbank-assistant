@@ -23,11 +23,13 @@ export function buildContext(chunks: ScoredChunk[]): { context: string; citation
     tokens += t;
   }
 
-  kept.sort((a, b) =>
-    a.documentId === b.documentId
-      ? a.ordinal - b.ordinal
-      : a.sourceTitle.localeCompare(b.sourceTitle),
-  );
+  // Group by document, then read in original order. documentId is the final
+  // discriminator so this is a total order even if two documents shared a title.
+  kept.sort((a, b) => {
+    if (a.documentId === b.documentId) return a.ordinal - b.ordinal;
+    const byTitle = a.sourceTitle.localeCompare(b.sourceTitle);
+    return byTitle !== 0 ? byTitle : a.documentId.localeCompare(b.documentId);
+  });
 
   const citations: Citation[] = [];
   const blocks: string[] = [];
@@ -46,7 +48,7 @@ export function buildContext(chunks: ScoredChunk[]): { context: string; citation
       headingPath: c.headingPath,
       sourceUrl: c.sourceUrl,
       anchor: c.anchor,
-      snippet: c.text.slice(0, 400),
+      snippet: c.text.slice(0, config.CITATION_SNIPPET_CHARS),
     });
   });
 

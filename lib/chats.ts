@@ -8,6 +8,17 @@ function file(id: string): string {
   return join(paths.chats, `${id}.json`);
 }
 
+// Same lesson as lib/manifest.ts: appendTurn is a read-modify-write over one
+// JSON file, so two concurrent appends to the SAME session (a double-submit, or
+// two tabs on one conversation) would both read the old state and the second
+// write would silently drop the first turn. Serialize every mutation.
+let queue: Promise<unknown> = Promise.resolve();
+function serialize<T>(fn: () => Promise<T>): Promise<T> {
+  const next = queue.then(fn, fn);
+  queue = next.catch(() => undefined);
+  return next;
+}
+
 export async function createChat(): Promise<ChatSession> {
   await mkdir(paths.chats, { recursive: true });
   const now = new Date().toISOString();
@@ -36,15 +47,17 @@ export async function listChats(): Promise<ChatSession[]> {
   }
 }
 
-export async function appendTurn(id: string, turn: ChatTurn): Promise<ChatSession | null> {
-  const session = await getChat(id);
-  if (!session) return null;
-  session.turns.push(turn);
-  session.updatedAt = new Date().toISOString();
-  if (session.turns.length === 1 && turn.role === 'user') {
-    session.title = turn.content.slice(0, 70);
-  }
-  await mkdir(paths.chats, { recursive: true });
-  await writeFile(file(id), JSON.stringify(session, null, 2));
-  return session;
+export function appendTurn(id: string, turn: ChatTurn): Promise<ChatSession | null> {
+  return serialize(async () => {
+    const session = await getChat(id);
+    if (!session) return null;
+    session.turns.push(turn);
+    session.updatedAt = new Date().toISOString();
+    if (session.turns.length === 1 && turn.role === 'user') {
+      session.title = turn.content.slice(0, 70);
+    }
+    await mkdir(paths.chats, { recursive: true });
+    await writeFile(file(id), JSON.stringify(session, null, 2));
+    return session;
+  });
 }

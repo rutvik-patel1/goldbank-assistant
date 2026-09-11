@@ -7,6 +7,7 @@ function int(name: string, fallback: number): number {
 export const config = {
   // Models
   CHAT_MODEL: process.env.GEMINI_CHAT_MODEL ?? 'gemini-3.1-flash-lite',
+  CHAT_TEMPERATURE: Number(process.env.CHAT_TEMPERATURE ?? 0.1),
   EMBEDDING_MODEL: process.env.GEMINI_EMBEDDING_MODEL ?? 'gemini-embedding-001',
   EMBEDDING_DIMENSIONS: int('EMBEDDING_DIMENSIONS', 768),
 
@@ -42,6 +43,9 @@ export const config = {
   TOP_K: int('TOP_K', 8),
   MIN_SCORE: Number(process.env.MIN_SCORE ?? 0.55),
   CONTEXT_TOKEN_BUDGET: int('CONTEXT_TOKEN_BUDGET', 6000),
+  SIBLING_SCORE_DISCOUNT: Number(process.env.SIBLING_SCORE_DISCOUNT ?? 0.95),
+  CONDENSE_HISTORY_TURNS: int('CONDENSE_HISTORY_TURNS', 6),
+  CITATION_SNIPPET_CHARS: int('CITATION_SNIPPET_CHARS', 400),
 
   // Upload
   MAX_UPLOAD_BYTES: int('MAX_UPLOAD_BYTES', 20 * 1024 * 1024),

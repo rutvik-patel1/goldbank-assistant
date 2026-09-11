@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { getChatModel, textOf } from '../gemini';
 import type { Citation } from '../types';
 
@@ -20,7 +21,7 @@ export function buildUserPrompt(question: string, context: string): string {
 }
 
 export async function* streamAnswer(question: string, context: string): AsyncGenerator<string> {
-  const model = getChatModel(0.1);
+  const model = getChatModel(config.CHAT_TEMPERATURE);
   const stream = await model.stream([
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: buildUserPrompt(question, context) },
@@ -47,14 +48,22 @@ export function validateCitations(
   const valid = new Set(citations.map((c) => c.n));
   const usedNumbers = new Set<number>();
 
-  const cleaned = answer.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (match, group: string) => {
+  // Only ONE- or TWO-digit groups are treated as citation markers. Context never
+  // holds more than a handful of passages, whereas this corpus quotes statutes by
+  // year — "the Financial Services Regulations 2004" — and a model writing "[2004]"
+  // must not have it silently deleted from an otherwise correct answer.
+  const cleaned = answer.replace(/\[(\d{1,2}(?:\s*,\s*\d{1,2})*)\]/g, (_match, group: string) => {
     const nums = group.split(',').map((s) => Number(s.trim())).filter((n) => valid.has(n));
     nums.forEach((n) => usedNumbers.add(n));
     return nums.length ? nums.map((n) => `[${n}]`).join('') : '';
   });
 
   return {
-    answer: cleaned.replace(/[ \t]{2,}/g, ' ').replace(/ +([.,;:])/g, '$1').trim(),
+    answer: cleaned
+      .replace(/[ \t]{2,}/g, ' ')
+      // Tidy the space a stripped marker leaves behind, before any closing punctuation.
+      .replace(/ +([.,;:!?)\]])/g, '$1')
+      .trim(),
     used: citations.filter((c) => usedNumbers.has(c.n)),
   };
 }

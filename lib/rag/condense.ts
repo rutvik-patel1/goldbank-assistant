@@ -1,3 +1,4 @@
+import { config } from '../config';
 import { getChatModel, textOf } from '../gemini';
 import type { ChatTurn } from '../types';
 
@@ -21,7 +22,7 @@ export async function condenseQuery(turns: ChatTurn[], question: string): Promis
   if (history.length === 0) return question;
 
   const rendered = history
-    .slice(-6)
+    .slice(-config.CONDENSE_HISTORY_TURNS)
     .map((t) => `${t.role === 'user' ? 'User' : 'Assistant'}: ${t.content.slice(0, 500)}`)
     .join('\n');
 
