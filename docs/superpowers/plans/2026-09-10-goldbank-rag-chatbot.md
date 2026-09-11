@@ -194,6 +194,7 @@ function int(name: string, fallback: number): number {
 export const config = {
   // Models
   CHAT_MODEL: process.env.GEMINI_CHAT_MODEL ?? 'gemini-3.1-flash-lite',
+  CHAT_TEMPERATURE: Number(process.env.CHAT_TEMPERATURE ?? 0.1),
   EMBEDDING_MODEL: process.env.GEMINI_EMBEDDING_MODEL ?? 'gemini-embedding-001',
   EMBEDDING_DIMENSIONS: int('EMBEDDING_DIMENSIONS', 768),
 
@@ -3185,6 +3186,7 @@ git commit -m "feat: query condensation, retrieval with relevance gate and sibli
 - [ ] **Step 1: Write `lib/rag/answer.ts`**
 
 ```ts
+import { config } from '../config';
 import { getChatModel, textOf } from '../gemini';
 import type { Citation } from '../types';
 
@@ -3207,7 +3209,7 @@ export function buildUserPrompt(question: string, context: string): string {
 }
 
 export async function* streamAnswer(question: string, context: string): AsyncGenerator<string> {
-  const model = getChatModel(0.1);
+  const model = getChatModel(config.CHAT_TEMPERATURE);
   const stream = await model.stream([
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: buildUserPrompt(question, context) },
@@ -3234,14 +3236,22 @@ export function validateCitations(
   const valid = new Set(citations.map((c) => c.n));
   const usedNumbers = new Set<number>();
 
-  const cleaned = answer.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (match, group: string) => {
+  // Only ONE- or TWO-digit groups are treated as citation markers. Context never
+  // holds more than a handful of passages, whereas this corpus quotes statutes by
+  // year — "the Financial Services Regulations 2004" — and a model writing "[2004]"
+  // must not have it silently deleted from an otherwise correct answer.
+  const cleaned = answer.replace(/\[(\d{1,2}(?:\s*,\s*\d{1,2})*)\]/g, (_match, group: string) => {
     const nums = group.split(',').map((s) => Number(s.trim())).filter((n) => valid.has(n));
     nums.forEach((n) => usedNumbers.add(n));
     return nums.length ? nums.map((n) => `[${n}]`).join('') : '';
   });
 
   return {
-    answer: cleaned.replace(/[ \t]{2,}/g, ' ').replace(/ +([.,;:])/g, '$1').trim(),
+    answer: cleaned
+      .replace(/[ \t]{2,}/g, ' ')
+      // Tidy the space a stripped marker leaves behind, before any closing punctuation.
+      .replace(/ +([.,;:!?)\]])/g, '$1')
+      .trim(),
     used: citations.filter((c) => usedNumbers.has(c.n)),
   };
 }
@@ -3258,6 +3268,17 @@ import type { ChatSession, ChatTurn } from './types';
 
 function file(id: string): string {
   return join(paths.chats, `${id}.json`);
+}
+
+// Same lesson as lib/manifest.ts: appendTurn is a read-modify-write over one
+// JSON file, so two concurrent appends to the SAME session (a double-submit, or
+// two tabs on one conversation) would both read the old state and the second
+// write would silently drop the first turn. Serialize every mutation.
+let queue: Promise<unknown> = Promise.resolve();
+function serialize<T>(fn: () => Promise<T>): Promise<T> {
+  const next = queue.then(fn, fn);
+  queue = next.catch(() => undefined);
+  return next;
 }
 
 export async function createChat(): Promise<ChatSession> {
@@ -3288,17 +3309,19 @@ export async function listChats(): Promise<ChatSession[]> {
   }
 }
 
-export async function appendTurn(id: string, turn: ChatTurn): Promise<ChatSession | null> {
-  const session = await getChat(id);
-  if (!session) return null;
-  session.turns.push(turn);
-  session.updatedAt = new Date().toISOString();
-  if (session.turns.length === 1 && turn.role === 'user') {
-    session.title = turn.content.slice(0, 70);
-  }
-  await mkdir(paths.chats, { recursive: true });
-  await writeFile(file(id), JSON.stringify(session, null, 2));
-  return session;
+export function appendTurn(id: string, turn: ChatTurn): Promise<ChatSession | null> {
+  return serialize(async () => {
+    const session = await getChat(id);
+    if (!session) return null;
+    session.turns.push(turn);
+    session.updatedAt = new Date().toISOString();
+    if (session.turns.length === 1 && turn.role === 'user') {
+      session.title = turn.content.slice(0, 70);
+    }
+    await mkdir(paths.chats, { recursive: true });
+    await writeFile(file(id), JSON.stringify(session, null, 2));
+    return session;
+  });
 }
 ```
 
