@@ -61,7 +61,11 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
   const [turns, setTurns] = useState<UiTurn[]>(initialTurns);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const chatId = useRef<string | null>(null);
+  // Held in state, not a ref: the share URL must be renderable. (An earlier ref
+  // could not be returned without tripping react-hooks/refs, which left /c/[id]
+  // unreachable — every conversation persisted and no way to find its link.)
+  const [chatId, setChatId] = useState<string | null>(null);
+  const chatId_ = useRef<string | null>(null);
   // `pending` is state, so a second submit fired before React commits the
   // pending render would pass the guard and corrupt patchLast's "last turn"
   // target. A ref closes that window synchronously.
@@ -96,19 +100,21 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
       const controller = new AbortController();
       abort.current = controller;
 
-      if (!chatId.current) {
+      if (!chatId_.current) {
         const created = await fetch('/api/chats', {
           method: 'POST',
           signal: controller.signal,
         });
         if (!created.ok) throw new Error(`could not start a conversation (${created.status})`);
-        chatId.current = ((await created.json()) as { chat: { id: string } }).chat.id;
+        const id = ((await created.json()) as { chat: { id: string } }).chat.id;
+        chatId_.current = id;
+        setChatId(id);
       }
 
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chatId: chatId.current, question }),
+        body: JSON.stringify({ chatId: chatId_.current, question }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`request failed: ${res.status}`);
@@ -119,6 +125,11 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
           patchLast({ meta: data as Meta });
         } else if (event === 'token') {
           accumulated += (data as { text: string }).text;
+          patchLast({ content: accumulated });
+        } else if (event === 'answer') {
+          // Replace the raw stream with the validated text so dead markers are
+          // gone before the user reads them, and the live view matches /c/[id].
+          accumulated = (data as { answer: string }).answer;
           patchLast({ content: accumulated });
         } else if (event === 'citations') {
           patchLast({ citations: (data as { citations: Citation[] }).citations });
@@ -139,8 +150,5 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
     }
   }, []);
 
-  // NOTE: deliberately does NOT return chatId. Reading `chatId.current` during
-  // render violates react-hooks/refs ("Cannot access ref value during render")
-  // and is a build-blocking lint error. Nothing consumes it.
-  return { turns, pending, error, send };
+  return { turns, pending, error, send, chatId };
 }

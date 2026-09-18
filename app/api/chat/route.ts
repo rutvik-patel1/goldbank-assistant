@@ -64,6 +64,10 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const { answer, used } = validateCitations(raw, citations);
+    // Send the CORRECTED text, not just a flag. The client streamed raw tokens and
+    // renders any [n] as a chip, so a hallucinated [7] would show as a live chip and
+    // then silently vanish when the same conversation is reopened from disk.
+    emit('answer', { answer });
     emit('citations', { citations: used });
     emit('done', { ms: Date.now() - started, corrected: answer !== raw.trim() });
 

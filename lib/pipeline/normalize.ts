@@ -12,8 +12,12 @@ export function splitLeadingTocList(markdown: string): { toc: string[]; rest: st
   const kept: string[] = [];
   let inLeadingRegion = true;
 
-  for (const line of lines) {
+  for (const [i, line] of lines.entries()) {
     const m = /^\s*[-*]\s+\[([^\]]+)\]\(([^)]+)\)\s*$/.exec(line);
+    // Bound the leading region. Without this, a user-uploaded markdown file that
+    // is simply a list of links has EVERY link line removed as "table of
+    // contents" — silent content loss, before contentHash, so undetectable later.
+    if (inLeadingRegion && i > config.MAX_TOC_SCAN_LINES) inLeadingRegion = false;
     if (inLeadingRegion && m) {
       toc.push(`${m[1]}\t${m[2]}`);
       continue;

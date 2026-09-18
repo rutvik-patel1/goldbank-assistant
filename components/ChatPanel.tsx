@@ -12,7 +12,8 @@ const SEEDS = [
 ];
 
 export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurns?: UiTurn[]; readOnly?: boolean }) {
-  const { turns, pending, error, send } = useChatStream(initialTurns);
+  const { turns, pending, error, send, chatId } = useChatStream(initialTurns);
+  const [copied, setCopied] = useState(false);
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   // `turns` changes on every streamed token, so auto-scrolling unconditionally
@@ -82,6 +83,20 @@ export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurn
         <div className="rounded-lg border border-line bg-panel px-3 py-2 text-sm text-gold">
           {error}
         </div>
+      )}
+
+      {chatId && !readOnly && turns.length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(`${window.location.origin}/c/${chatId}`)
+              .then(() => setCopied(true));
+          }}
+          className="text-xs text-muted underline hover:text-gold"
+        >
+          {copied ? 'Share link copied' : 'Copy a link to this conversation'}
+        </button>
       )}
 
       {!readOnly && (

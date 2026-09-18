@@ -8,7 +8,7 @@ const SMALL_WORDS = new Set([
 
 /**
  * A numbered section title, e.g. `1\. Important information and who we are`.
- * The privacy policy numbers its eight top-level sections this way and carries
+ * The privacy policy numbers its ten top-level sections this way and carries
  * NO table-of-contents list, so this deterministic signal is the only reliable
  * way to recover its structure. The optional backslash is markdown's escape of
  * the period, which the scrape preserves.

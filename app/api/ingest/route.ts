@@ -1,6 +1,5 @@
-import { extname } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { config, paths } from '@/lib/config';
 import { sseStream } from '@/lib/sse';
 import { assertDimensions } from '@/lib/store';
@@ -8,6 +7,12 @@ import { ingestBuffer, type IngestEvent } from '@/lib/pipeline/ingest';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
+
+/** Reduce a multipart filename to a single safe path segment. */
+function safeUploadName(name: string): string {
+  const base = basename(name).replace(/[^\w.\- ]+/g, '_').slice(0, 120);
+  return /^[\w.\- ]{1,120}$/.test(base) ? base : 'upload';
+}
 
 export async function POST(req: Request): Promise<Response> {
   const form = await req.formData();
@@ -38,7 +43,11 @@ export async function POST(req: Request): Promise<Response> {
 
     for (const file of files) {
       const buf = Buffer.from(await file.arrayBuffer());
-      await writeFile(join(paths.uploads, `${Date.now()}-${file.name}`), buf);
+      // A multipart filename is attacker-controlled. Unsanitised, join() lets it
+      // escape ./data/uploads entirely — "x/../../../pwned.json" resolves to the
+      // repo root — which is an unauthenticated arbitrary file write. basename()
+      // strips any path, and the allowlist rejects what is left if it is odd.
+      await writeFile(join(paths.uploads, `${Date.now()}-${safeUploadName(file.name)}`), buf);
       emit('status', { type: 'status', documentId: file.name, stage: 'parsing' } as IngestEvent);
       await ingestBuffer(buf, file.name, (e) => emit(e.type, e));
     }

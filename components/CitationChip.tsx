@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { config } from '@/lib/config';
 import type { Citation } from '@/lib/types';
 
 export function CitationChip({ citation }: { citation: Citation }) {
@@ -29,7 +30,10 @@ export function CitationChip({ citation }: { citation: Citation }) {
 
       {open && (
         <div className="border-t border-line px-3 py-2 text-sm">
-          <p className="whitespace-pre-wrap text-muted">{citation.snippet}…</p>
+          <p className="whitespace-pre-wrap text-muted">
+            {citation.snippet}
+            {citation.snippet.length >= config.CITATION_SNIPPET_CHARS ? '…' : ''}
+          </p>
           {href && (
             <a
               href={href}

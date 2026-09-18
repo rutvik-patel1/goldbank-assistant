@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import type { DocumentRecord, DocumentStatus, ParsedDoc } from '../types';
 import { getStore } from '../store';
 import {
-  findByHash, findBySourceUrl, patchDocument, removeDocument, upsertDocument,
+  findByFilename, findByHash, findBySourceUrl, patchDocument, removeDocument, upsertDocument,
 } from '../manifest';
 import { chunkDocument } from './chunk';
 import { embedChunks } from './embed';
@@ -39,14 +39,17 @@ async function ingestDoc(
     return { documentId: identical.id, chunks: identical.chunkCount, skipped: 'already indexed' };
   }
 
-  // A changed document with the same source URL replaces the old version outright.
+  // A changed document replaces the old version outright. Key on sourceUrl when
+  // there is one (scraped JSON), else on filename — otherwise re-uploading an
+  // edited PDF/DOCX/MD produces a SECOND copy, both retrievable and citable, with
+  // no error. "Tweak it and upload again" is the most likely demo action.
   const store = await getStore();
-  if (doc.metadata.sourceUrl) {
-    const prior = await findBySourceUrl(doc.metadata.sourceUrl);
-    if (prior) {
-      await store.deleteByDocument(prior.id);
-      await removeDocument(prior.id);
-    }
+  const prior = doc.metadata.sourceUrl
+    ? await findBySourceUrl(doc.metadata.sourceUrl)
+    : await findByFilename(filename);
+  if (prior) {
+    await store.deleteByDocument(prior.id);
+    await removeDocument(prior.id);
   }
 
   const documentId = nanoid(10);

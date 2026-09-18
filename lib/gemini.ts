@@ -11,8 +11,12 @@ export function requireApiKey(): string {
   return key;
 }
 
-let chat: ChatGoogleGenerativeAI | null = null;
+// Keyed by temperature: a single cached instance silently served whichever
+// temperature happened to be requested first, making config.CHAT_TEMPERATURE a
+// dead tunable and letting ingest's 0 leak into every answer.
+const chatModels = new Map<number, ChatGoogleGenerativeAI>();
 export function getChatModel(temperature = 0.1): ChatGoogleGenerativeAI {
+  let chat = chatModels.get(temperature);
   if (!chat) {
     chat = new ChatGoogleGenerativeAI({
       model: config.CHAT_MODEL,
@@ -20,6 +24,7 @@ export function getChatModel(temperature = 0.1): ChatGoogleGenerativeAI {
       temperature,
       maxRetries: 3,
     });
+    chatModels.set(temperature, chat);
   }
   return chat;
 }

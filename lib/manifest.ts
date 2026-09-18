@@ -42,7 +42,12 @@ export function patchDocument(id: string, patch: Partial<DocumentRecord>): Promi
   return serialize(async () => {
     const all = await read();
     const i = all.findIndex((r) => r.id === id);
-    if (i < 0) return;
+    if (i < 0) {
+      // The record was removed underneath us (a concurrent replace). Say so: the
+      // in-flight document's vectors may already be in the store with no row.
+      console.warn(`manifest: patch for unknown document ${id} (removed concurrently?)`);
+      return;
+    }
     all[i] = { ...all[i], ...patch, updatedAt: new Date().toISOString() };
     await write(all);
   });
@@ -60,4 +65,11 @@ export function findByHash(hash: string): Promise<DocumentRecord | undefined> {
 
 export function findBySourceUrl(url: string): Promise<DocumentRecord | undefined> {
   return serialize(async () => (await read()).find((r) => r.sourceUrl === url));
+}
+
+/** Replace-on-change key for uploads, which carry no sourceUrl. */
+export function findByFilename(filename: string): Promise<DocumentRecord | undefined> {
+  return serialize(async () =>
+    (await read()).find((r) => !r.sourceUrl && r.filename === filename),
+  );
 }

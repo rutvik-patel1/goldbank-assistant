@@ -7,15 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check-models": "tsx --env-file=.env.local scripts/check-models.ts",
-    "seed": "tsx --env-file=.env.local scripts/seed.ts",
-    "smoke": "tsx --env-file=.env.local scripts/smoke.ts",
+    "check-models": "tsx --env-file-if-exists=.env.local scripts/check-models.ts",
+    "seed": "tsx --env-file-if-exists=.env.local scripts/seed.ts",
+    "smoke": "tsx --env-file-if-exists=.env.local scripts/smoke.ts",
     "verify:parse": "tsx scripts/verify-parse.ts",
     "verify:headings": "tsx scripts/verify-headings.ts",
     "verify:chunk": "tsx scripts/verify-chunk.ts",
     "verify:store": "tsx scripts/verify-store.ts",
-    "verify:retrieve": "tsx --env-file=.env.local scripts/verify-retrieve.ts",
-    "verify:enrich": "tsx --env-file=.env.local scripts/verify-enrich.ts"
+    "verify:retrieve": "tsx --env-file-if-exists=.env.local scripts/verify-retrieve.ts",
+    "verify:enrich": "tsx --env-file-if-exists=.env.local scripts/verify-enrich.ts"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.38.0",
