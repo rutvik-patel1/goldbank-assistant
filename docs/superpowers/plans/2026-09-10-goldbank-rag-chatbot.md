@@ -4141,9 +4141,20 @@ export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurn
         <button
           type="button"
           onClick={() => {
-            void navigator.clipboard
-              .writeText(`${window.location.origin}/c/${chatId}`)
-              .then(() => setCopied(true));
+            const url = `${window.location.origin}/c/${chatId}`;
+            // navigator.clipboard is undefined outside a secure context (plain
+            // http on anything but localhost — i.e. demoing from another machine),
+            // and writeText can reject on a permission denial. Either would throw
+            // out of the handler, so fall back to showing the URL for manual copy.
+            void (async () => {
+              try {
+                if (!navigator.clipboard) throw new Error('clipboard unavailable');
+                await navigator.clipboard.writeText(url);
+                setCopied(true);
+              } catch {
+                window.prompt('Copy this link to share the conversation:', url);
+              }
+            })();
           }}
           className="text-xs text-muted underline hover:text-gold"
         >
