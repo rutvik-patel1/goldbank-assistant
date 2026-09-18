@@ -145,8 +145,9 @@ green from the start.
 
 - [ ] **Step 3: Add npm scripts**
 
-Merge into `package.json`. **Note the `--env-file=.env.local` on every script that
-calls the API.** Next.js auto-loads `.env.local` for `next dev`, but a plain `tsx`
+Merge into `package.json`. **Note the `--env-file-if-exists=.env.local` on every script that
+calls the API.** (`--env-file` hard-fails with a cryptic `node: .env.local: not found`
+before `requireApiKey` can print its friendly message.) Next.js auto-loads `.env.local` for `next dev`, but a plain `tsx`
 invocation does not — without the flag `npm run seed` and `npm run check-models` die
 with "Missing GEMINI_API_KEY" even when the key is correctly in place, which breaks the
 README's own quick start. The three offline `verify:*` scripts need no key and omit it.
@@ -158,15 +159,15 @@ README's own quick start. The three offline `verify:*` scripts need no key and o
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check-models": "tsx --env-file=.env.local scripts/check-models.ts",
-    "seed": "tsx --env-file=.env.local scripts/seed.ts",
-    "smoke": "tsx --env-file=.env.local scripts/smoke.ts",
+    "check-models": "tsx --env-file-if-exists=.env.local scripts/check-models.ts",
+    "seed": "tsx --env-file-if-exists=.env.local scripts/seed.ts",
+    "smoke": "tsx --env-file-if-exists=.env.local scripts/smoke.ts",
     "verify:parse": "tsx scripts/verify-parse.ts",
     "verify:headings": "tsx scripts/verify-headings.ts",
     "verify:chunk": "tsx scripts/verify-chunk.ts",
     "verify:store": "tsx scripts/verify-store.ts",
-    "verify:retrieve": "tsx --env-file=.env.local scripts/verify-retrieve.ts",
-    "verify:enrich": "tsx --env-file=.env.local scripts/verify-enrich.ts"
+    "verify:retrieve": "tsx --env-file-if-exists=.env.local scripts/verify-retrieve.ts",
+    "verify:enrich": "tsx --env-file-if-exists=.env.local scripts/verify-enrich.ts"
   }
 }
 ```
@@ -226,6 +227,7 @@ export const config = {
   MAX_CHUNK_TOKENS: int('MAX_CHUNK_TOKENS', 450),
   CHUNK_OVERLAP_RATIO: 0.15,
   MAX_QUESTION_CHARS: 140,
+  MAX_TOC_SCAN_LINES: int('MAX_TOC_SCAN_LINES', 60),
   MIN_CHUNK_TOKENS: 12,
   MAX_HEADING_CHARS: 90,
   HEADING_CAPS_RATIO: 0.6,
@@ -399,8 +401,12 @@ export function requireApiKey(): string {
   return key;
 }
 
-let chat: ChatGoogleGenerativeAI | null = null;
+// Keyed by temperature: a single cached instance silently served whichever
+// temperature happened to be requested first, making config.CHAT_TEMPERATURE a
+// dead tunable and letting ingest's 0 leak into every answer.
+const chatModels = new Map<number, ChatGoogleGenerativeAI>();
 export function getChatModel(temperature = 0.1): ChatGoogleGenerativeAI {
+  let chat = chatModels.get(temperature);
   if (!chat) {
     chat = new ChatGoogleGenerativeAI({
       model: config.CHAT_MODEL,
@@ -408,6 +414,7 @@ export function getChatModel(temperature = 0.1): ChatGoogleGenerativeAI {
       temperature,
       maxRetries: 3,
     });
+    chatModels.set(temperature, chat);
   }
   return chat;
 }
@@ -1235,8 +1242,12 @@ export function splitLeadingTocList(markdown: string): { toc: string[]; rest: st
   const kept: string[] = [];
   let inLeadingRegion = true;
 
-  for (const line of lines) {
+  for (const [i, line] of lines.entries()) {
     const m = /^\s*[-*]\s+\[([^\]]+)\]\(([^)]+)\)\s*$/.exec(line);
+    // Bound the leading region. Without this, a user-uploaded markdown file that
+    // is simply a list of links has EVERY link line removed as "table of
+    // contents" — silent content loss, before contentHash, so undetectable later.
+    if (inLeadingRegion && i > config.MAX_TOC_SCAN_LINES) inLeadingRegion = false;
     if (inLeadingRegion && m) {
       toc.push(`${m[1]}\t${m[2]}`);
       continue;
@@ -1454,7 +1465,7 @@ const SMALL_WORDS = new Set([
 
 /**
  * A numbered section title, e.g. `1\. Important information and who we are`.
- * The privacy policy numbers its eight top-level sections this way and carries
+ * The privacy policy numbers its ten top-level sections (`1.`…`10.`) this way and carries
  * NO table-of-contents list, so this deterministic signal is the only reliable
  * way to recover its structure. The optional backslash is markdown's escape of
  * the period, which the scrape preserves.
@@ -2467,7 +2478,12 @@ export function patchDocument(id: string, patch: Partial<DocumentRecord>): Promi
   return serialize(async () => {
     const all = await read();
     const i = all.findIndex((r) => r.id === id);
-    if (i < 0) return;
+    if (i < 0) {
+      // The record was removed underneath us (a concurrent replace). Say so: the
+      // in-flight document's vectors may already be in the store with no row.
+      console.warn(`manifest: patch for unknown document ${id} (removed concurrently?)`);
+      return;
+    }
     all[i] = { ...all[i], ...patch, updatedAt: new Date().toISOString() };
     await write(all);
   });
@@ -2486,6 +2502,13 @@ export function findByHash(hash: string): Promise<DocumentRecord | undefined> {
 export function findBySourceUrl(url: string): Promise<DocumentRecord | undefined> {
   return serialize(async () => (await read()).find((r) => r.sourceUrl === url));
 }
+
+/** Replace-on-change key for uploads, which carry no sourceUrl. */
+export function findByFilename(filename: string): Promise<DocumentRecord | undefined> {
+  return serialize(async () =>
+    (await read()).find((r) => !r.sourceUrl && r.filename === filename),
+  );
+}
 ```
 
 - [ ] **Step 3: Write `lib/pipeline/ingest.ts`**
@@ -2495,7 +2518,7 @@ import { nanoid } from 'nanoid';
 import type { DocumentRecord, DocumentStatus, ParsedDoc } from '../types';
 import { getStore } from '../store';
 import {
-  findByHash, findBySourceUrl, patchDocument, removeDocument, upsertDocument,
+  findByFilename, findByHash, findBySourceUrl, patchDocument, removeDocument, upsertDocument,
 } from '../manifest';
 import { chunkDocument } from './chunk';
 import { embedChunks } from './embed';
@@ -2532,14 +2555,17 @@ async function ingestDoc(
     return { documentId: identical.id, chunks: identical.chunkCount, skipped: 'already indexed' };
   }
 
-  // A changed document with the same source URL replaces the old version outright.
+  // A changed document replaces the old version outright. Key on sourceUrl when
+  // there is one (scraped JSON), else on filename — otherwise re-uploading an
+  // edited PDF/DOCX/MD produces a SECOND copy, both retrievable and citable, with
+  // no error. "Tweak it and upload again" is the most likely demo action.
   const store = await getStore();
-  if (doc.metadata.sourceUrl) {
-    const prior = await findBySourceUrl(doc.metadata.sourceUrl);
-    if (prior) {
-      await store.deleteByDocument(prior.id);
-      await removeDocument(prior.id);
-    }
+  const prior = doc.metadata.sourceUrl
+    ? await findBySourceUrl(doc.metadata.sourceUrl)
+    : await findByFilename(filename);
+  if (prior) {
+    await store.deleteByDocument(prior.id);
+    await removeDocument(prior.id);
   }
 
   const documentId = nanoid(10);
@@ -2759,17 +2785,31 @@ export function sseStream<T>(
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
+      // Once the client aborts, enqueue() throws "Invalid state". If that throw
+      // escapes, ingest catches it as a PIPELINE failure and deletes the vectors
+      // of a document that had already finished — a closed tab destroying good
+      // work. So emit() goes quiet after the first failure, and close() is guarded.
+      let closed = false;
       const emit = (event: string, data: T) => {
-        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          closed = true; // client went away; keep the server-side work running
+        }
       };
       try {
         await run(emit);
       } catch (e) {
-        controller.enqueue(
-          encoder.encode(`event: error\ndata: ${JSON.stringify({ message: (e as Error).message })}\n\n`),
-        );
+        emit('error', { message: (e as Error).message } as unknown as T);
       } finally {
-        controller.close();
+        if (!closed) {
+          try {
+            controller.close();
+          } catch {
+            /* already closed by the client */
+          }
+        }
       }
     },
   });
@@ -2788,9 +2828,8 @@ export function sseStream<T>(
 - [ ] **Step 2: Write `app/api/ingest/route.ts`**
 
 ```ts
-import { extname } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { config, paths } from '@/lib/config';
 import { sseStream } from '@/lib/sse';
 import { assertDimensions } from '@/lib/store';
@@ -2798,6 +2837,12 @@ import { ingestBuffer, type IngestEvent } from '@/lib/pipeline/ingest';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
+
+/** Reduce a multipart filename to a single safe path segment. */
+function safeUploadName(name: string): string {
+  const base = basename(name).replace(/[^\w.\- ]+/g, '_').slice(0, 120);
+  return /^[\w.\- ]{1,120}$/.test(base) ? base : 'upload';
+}
 
 export async function POST(req: Request): Promise<Response> {
   const form = await req.formData();
@@ -2828,7 +2873,11 @@ export async function POST(req: Request): Promise<Response> {
 
     for (const file of files) {
       const buf = Buffer.from(await file.arrayBuffer());
-      await writeFile(join(paths.uploads, `${Date.now()}-${file.name}`), buf);
+      // A multipart filename is attacker-controlled. Unsanitised, join() lets it
+      // escape ./data/uploads entirely — "x/../../../pwned.json" resolves to the
+      // repo root — which is an unauthenticated arbitrary file write. basename()
+      // strips any path, and the allowlist rejects what is left if it is odd.
+      await writeFile(join(paths.uploads, `${Date.now()}-${safeUploadName(file.name)}`), buf);
       emit('status', { type: 'status', documentId: file.name, stage: 'parsing' } as IngestEvent);
       await ingestBuffer(buf, file.name, (e) => emit(e.type, e));
     }
@@ -3433,6 +3482,10 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const { answer, used } = validateCitations(raw, citations);
+    // Send the CORRECTED text, not just a flag. The client streamed raw tokens and
+    // renders any [n] as a chip, so a hallucinated [7] would show as a live chip and
+    // then silently vanish when the same conversation is reopened from disk.
+    emit('answer', { answer });
     emit('citations', { citations: used });
     emit('done', { ms: Date.now() - started, corrected: answer !== raw.trim() });
 
@@ -3680,7 +3733,11 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
   const [turns, setTurns] = useState<UiTurn[]>(initialTurns);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const chatId = useRef<string | null>(null);
+  // Held in state, not a ref: the share URL must be renderable. (An earlier ref
+  // could not be returned without tripping react-hooks/refs, which left /c/[id]
+  // unreachable — every conversation persisted and no way to find its link.)
+  const [chatId, setChatId] = useState<string | null>(null);
+  const chatId_ = useRef<string | null>(null);
   // `pending` is state, so a second submit fired before React commits the
   // pending render would pass the guard and corrupt patchLast's "last turn"
   // target. A ref closes that window synchronously.
@@ -3715,19 +3772,21 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
       const controller = new AbortController();
       abort.current = controller;
 
-      if (!chatId.current) {
+      if (!chatId_.current) {
         const created = await fetch('/api/chats', {
           method: 'POST',
           signal: controller.signal,
         });
         if (!created.ok) throw new Error(`could not start a conversation (${created.status})`);
-        chatId.current = ((await created.json()) as { chat: { id: string } }).chat.id;
+        const id = ((await created.json()) as { chat: { id: string } }).chat.id;
+        chatId_.current = id;
+        setChatId(id);
       }
 
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chatId: chatId.current, question }),
+        body: JSON.stringify({ chatId: chatId_.current, question }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`request failed: ${res.status}`);
@@ -3738,6 +3797,11 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
           patchLast({ meta: data as Meta });
         } else if (event === 'token') {
           accumulated += (data as { text: string }).text;
+          patchLast({ content: accumulated });
+        } else if (event === 'answer') {
+          // Replace the raw stream with the validated text so dead markers are
+          // gone before the user reads them, and the live view matches /c/[id].
+          accumulated = (data as { answer: string }).answer;
           patchLast({ content: accumulated });
         } else if (event === 'citations') {
           patchLast({ citations: (data as { citations: Citation[] }).citations });
@@ -3758,10 +3822,7 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
     }
   }, []);
 
-  // NOTE: deliberately does NOT return chatId. Reading `chatId.current` during
-  // render violates react-hooks/refs ("Cannot access ref value during render")
-  // and is a build-blocking lint error. Nothing consumes it.
-  return { turns, pending, error, send };
+  return { turns, pending, error, send, chatId };
 }
 ```
 
@@ -3771,6 +3832,7 @@ export function useChatStream(initialTurns: UiTurn[] = []) {
 'use client';
 
 import { useState } from 'react';
+import { config } from '@/lib/config';
 import type { Citation } from '@/lib/types';
 
 export function CitationChip({ citation }: { citation: Citation }) {
@@ -3799,7 +3861,10 @@ export function CitationChip({ citation }: { citation: Citation }) {
 
       {open && (
         <div className="border-t border-line px-3 py-2 text-sm">
-          <p className="whitespace-pre-wrap text-muted">{citation.snippet}…</p>
+          <p className="whitespace-pre-wrap text-muted">
+            {citation.snippet}
+            {citation.snippet.length >= config.CITATION_SNIPPET_CHARS ? '…' : ''}
+          </p>
           {href && (
             <a
               href={href}
@@ -3999,7 +4064,8 @@ const SEEDS = [
 ];
 
 export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurns?: UiTurn[]; readOnly?: boolean }) {
-  const { turns, pending, error, send } = useChatStream(initialTurns);
+  const { turns, pending, error, send, chatId } = useChatStream(initialTurns);
+  const [copied, setCopied] = useState(false);
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   // `turns` changes on every streamed token, so auto-scrolling unconditionally
@@ -4069,6 +4135,20 @@ export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurn
         <div className="rounded-lg border border-line bg-panel px-3 py-2 text-sm text-gold">
           {error}
         </div>
+      )}
+
+      {chatId && !readOnly && turns.length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard
+              .writeText(`${window.location.origin}/c/${chatId}`)
+              .then(() => setCopied(true));
+          }}
+          className="text-xs text-muted underline hover:text-gold"
+        >
+          {copied ? 'Share link copied' : 'Copy a link to this conversation'}
+        </button>
       )}
 
       {!readOnly && (
