@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "check-models": "tsx --env-file-if-exists=.env.local scripts/check-models.ts",
+    "scrape": "tsx scripts/scrape.ts",
     "seed": "tsx --env-file-if-exists=.env.local scripts/seed.ts",
     "smoke": "tsx --env-file-if-exists=.env.local scripts/smoke.ts",
     "verify:parse": "tsx scripts/verify-parse.ts",

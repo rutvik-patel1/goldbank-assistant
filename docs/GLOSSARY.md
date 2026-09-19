@@ -31,19 +31,25 @@ than stylistic — a refusal below `MIN_SCORE`, verbatim-only context, and
 stripped citation markers.
 
 ### Corpus
-The fixed body of documents the assistant may answer from — here, ten pages
-scraped from goldbank.co.uk and committed under `knowledge-base/goldbank/`. One
-is a 404 stub refused at parse time, so the indexed corpus is **9 documents /
-111 chunks**. It is a boundary as much as a collection: outside it, the correct
-answer is a refusal.
+The fixed body of documents the assistant may answer from — here, 21 pages
+scraped from goldbank.co.uk and committed under `knowledge-base/goldbank/`: the
+FAQ, nine legal pages, and 11 informational ones. One is a 404 stub refused at
+parse time, so the indexed corpus is **20 documents / 196 chunks**. Product
+pages are excluded because their live prices go stale in the index. It is a
+boundary as much as a collection: outside it, the correct answer is a refusal.
 
 ### Scraping
 Capturing web pages as clean structured text plus provenance, rather than raw
-HTML. [Firecrawl](https://www.firecrawl.dev/) returns per-page JSON with a
-`markdown` body and `metadata` carrying `sourceURL`, `title` and `statusCode`.
-Consequences: no DOM parsing; `sourceURL` is both the citation target and the
-identity key on re-ingest; `statusCode >= 400` lets a loader refuse an error
-page instead of indexing "404 Not Found" as policy.
+HTML. Every corpus file is per-page JSON with a `markdown` body and `metadata`
+carrying `sourceURL`, `title` and `statusCode`. Two producers write that shape:
+[Firecrawl](https://www.firecrawl.dev/) for the legal and FAQ pages, and
+`scripts/scrape.ts` (`npm run scrape`) for the informational ones, which fetches
+HTML and converts it with `turndown`. Consequences: no DOM parsing downstream;
+`sourceURL` is both the citation target and the identity key on re-ingest, so a
+re-scrape replaces a page rather than adding a second citable copy; and
+`statusCode >= 400` lets a loader refuse an error page instead of indexing
+"404 Not Found" as policy.
+*Code:* `scripts/scrape.ts`, `lib/loaders/scraped-json.ts`
 
 ---
 

@@ -33,13 +33,21 @@ in use.
 
 ## Data sources
 
-**The [corpus](./GLOSSARY.md#corpus).** `knowledge-base/goldbank/` holds ten pages scraped from
-[goldbank.co.uk](https://goldbank.co.uk) — one FAQ page plus nine legal pages.
-It is committed, so `npm run seed` rebuilds the index from a fresh clone.
+**The [corpus](./GLOSSARY.md#corpus).** `knowledge-base/goldbank/` holds 21 pages
+from [goldbank.co.uk](https://goldbank.co.uk) — the FAQ page, nine legal pages,
+and 11 informational pages (contact, selling, trade services, membership, and
+six guides). It is committed, so `npm run seed` rebuilds the index from a fresh
+clone. Product, brand and collection pages are excluded on purpose: they quote
+live prices that move daily and nothing here refreshes an indexed document, so
+the bot would cite a stale figure as current fact. The full in/out list is in
+[`knowledge-base/README.md`](../knowledge-base/README.md).
 
-**[Scraping](./GLOSSARY.md#scraping): [Firecrawl](https://www.firecrawl.dev/)** (September 2026). It
-crawls a site and returns clean, structured markdown per page instead of raw
-HTML, with the source URL and HTTP status attached:
+**[Scraping](./GLOSSARY.md#scraping).** Two batches, one envelope. The legal and
+FAQ pages came from [Firecrawl](https://www.firecrawl.dev/) in September 2026;
+the informational pages come from `npm run scrape` (`scripts/scrape.ts`), which
+fetches HTML and converts it with `turndown` — no API key, and it re-runs to
+refresh them. Either way a page arrives as markdown with its source URL and HTTP
+status attached, and `metadata.scraper` records which produced it:
 
 ```json
 { "markdown": "# Frequently Asked Questions\n…",
@@ -50,16 +58,16 @@ HTML, with the source URL and HTTP status attached:
 Three consequences: the pipeline never parses a DOM for scraped pages;
 `sourceURL` is both the citation target and the identity key on re-ingest, so
 re-scraping replaces a page rather than producing a second citable copy; and
-`statusCode >= 400` is refused at parse time. One of the ten pages is a 404
-stub — the live site removed it after the scrape — so the shipped index is
-**9 documents / 111 chunks**. Re-scraping is manual; the app does not crawl
+`statusCode >= 400` is refused at parse time. One page is a 404 stub — the live
+site removed it after the scrape — so the shipped index is
+**20 documents / 196 chunks**. Re-scraping is manual; the app does not crawl
 live URLs.
 
 **Uploads.** The same pipeline backs `/knowledge`, capped at 20 MB per file:
 
 | Format | Loader | Notes |
 |---|---|---|
-| `.json` | `scraped-json.ts` | Firecrawl-shaped page JSON |
+| `.json` | `scraped-json.ts` | Scraped page JSON (`markdown` + `metadata`) |
 | `.pdf` | `pdf.ts` | `pdf-parse`; text layer only, no OCR |
 | `.docx` | `docx.ts` | `mammoth` → HTML → markdown |
 | `.html` / `.htm` | `html.ts` | `turndown` → markdown |
@@ -80,7 +88,7 @@ status event per stage so the seed script and the browser show live progress.
 | [Embed](./GLOSSARY.md#embedding-vector) | `pipeline/embed.ts` | Batched and retried; vectors truncated to [`EMBEDDING_DIMENSIONS`](./GLOSSARY.md#dimensions) and re-normalized. |
 | [Store](./GLOSSARY.md#store) | `store/*` | [Upsert](./GLOSSARY.md#upsert) through the `VectorStore` port. |
 
-**Why structure recovery exists.** Nine of the ten pages contain exactly one
+**Why structure recovery exists.** The nine legal pages contain exactly one
 markdown heading; their section titles are unmarked Title-Case paragraphs, so a
 stock splitter turns the 28 KB privacy policy into one blob cut at arbitrary
 offsets. The recovered tree yields 27 sections there (11 `h2` + 16 `h3`), and

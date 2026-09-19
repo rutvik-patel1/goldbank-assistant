@@ -1,0 +1,12 @@
+{
+  "markdown": "# Get in touch\n\nVisit us\n\nGold Bank\n215 The Broadway,\nSouthall,\nUB1 1NB\n\nCall us\n\n[0203 500 1111](tel:02035001111)\n\n- Monday: 9:00 AM - 6:00 PM\n- Tuesday: 9:00 AM - 6:00 PM\n- Wednesday: 9:00 AM - 6:00 PM\n- Thursday: 9:00 AM - 6:00 PM\n- Friday: 9:00 AM - 6:00 PM\n- Saturday: 12:00 PM - 5:00 PM\n- Sunday: Closed\n\n###### Solutions\n\n##### FAQs\n\nDo You Ship Outside the UK?\n\nUnfortunately, we do not currently deliver outside the UK. We deliver to UK mainland addresses only.\n\nIf I place an order through your website, typically how long would it take to receive?\n\nOur special delivery service can be used for next working day delivery or alternatively our standard delivery takes between 2-5 Working days.\n\nWould you buy-back the gold you are selling to us?\n\nYes! We guarantee to buy back any gold you have bought from us, and we can also buy gold that you have bought from elsewhere.\n\nAre the precious metals you are selling certified?\n\nAll minted gold bars we sell come fully certified with an accompanied assay certificate on the rear.\n\nI'm worried about my gold going missing in the post?\n\nIf your order value is under £2,500 you can select Royal Mail Special delivery service and insure up to £2,500.\n\nOr alternatively if your items are valued above £2,000 you can use our insured premium collect service.\n\nAre your prices quoted in real-time and reflective on current market value?\n\nThe prices we quote are connected to the real-time market gold price and updated every minute. We strive to deliver a good service at a great price.\n\nI'm getting a better price elsewhere. Can you match it?\n\nWhy not! Just send us over the evidence and we can look to do a price match for you.",
+  "metadata": {
+    "title": "Contact Us | Gold Bank",
+    "sourceURL": "https://goldbank.co.uk/contact",
+    "url": "https://goldbank.co.uk/contact",
+    "statusCode": 200,
+    "contentType": "text/html; charset=UTF-8",
+    "scrapedAt": "2026-09-19T05:34:54.646Z",
+    "scraper": "curl+turndown (scripts/scrape.ts)"
+  }
+}

@@ -17,7 +17,7 @@ dealer). The corpus ships with the repo, so a clone is a working demo.
 | LLM & embeddings | Google Gemini via LangChain 1.x (`@langchain/google-genai`) |
 | Vector store | LanceDB (`@lancedb/lancedb` + Apache Arrow), with a plain-JSON index as a drop-in alternative |
 | Document loaders | `pdf-parse`, `mammoth` (DOCX), `turndown` (HTML), `unzipper` (ZIP) |
-| Scraping | [Firecrawl](https://www.firecrawl.dev/) — structured markdown per page, run offline |
+| Scraping | [Firecrawl](https://www.firecrawl.dev/) for the legal pages, `turndown` via `npm run scrape` for the rest — both offline |
 
 No database, no queue, no auth: everything derived lives under `./data` and is
 rebuildable from the committed corpus with one command.
@@ -49,16 +49,23 @@ fresh clone.
 
 ## Data sources
 
-The bundled corpus is ten pages scraped from
-[goldbank.co.uk](https://goldbank.co.uk) with
-[Firecrawl](https://www.firecrawl.dev/) — one FAQ page plus nine legal pages.
-Firecrawl returns clean, structured markdown per page rather than raw HTML,
-along with the source URL and HTTP status, which is what makes deep-linked
-citations and the refusal of error pages possible.
+The bundled corpus is 21 pages from
+[goldbank.co.uk](https://goldbank.co.uk), committed to the repo in two batches:
+the FAQ and nine legal pages, scraped with
+[Firecrawl](https://www.firecrawl.dev/) in September 2026, and 11 informational
+pages (contact, selling, trade services, membership, and six guides on VAT,
+zakat, gold pricing and the sovereign) fetched by `npm run scrape`. Both batches
+carry per-page markdown with its source URL and HTTP status, which is what makes
+deep-linked citations and the refusal of error pages possible.
 
-One of the ten is an HTTP 404 stub — the live site removed that page after the
-scrape — and is refused at parse time rather than indexed as content. The
-shipped index is **9 documents / 111 chunks**.
+One page is an HTTP 404 stub — the live site removed it after the scrape — and
+is refused at parse time rather than indexed as content. The shipped index is
+**20 documents / 196 chunks**.
+
+Product and collection pages are deliberately excluded: they quote live prices
+that move daily, and nothing here refreshes an indexed document. What is in and
+what is out, and why, is in
+[knowledge-base/README.md](./knowledge-base/README.md).
 
 The same pipeline backs the upload zone at `/knowledge`, which accepts `.json`,
 `.zip`, `.pdf`, `.docx`, `.md`, `.txt`, `.html` and `.htm`. Full detail in
@@ -116,6 +123,7 @@ There is no automated test suite; this is a deliberate scope decision. Manual
 harnesses cover each pipeline stage:
 
 ```bash
+npm run scrape            # refresh the informational pages from goldbank.co.uk
 npm run check-models      # models exist and embeddings return 768 dims
 npm run verify:parse      # normalization over the real corpus
 npm run verify:headings   # named sections recovered from the legal pages

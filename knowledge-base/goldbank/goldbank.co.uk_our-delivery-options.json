@@ -1,0 +1,12 @@
+{
+  "markdown": "# Our Delivery Options\n\n**Over here at Gold Bank London, we offer 3 types of payment options for our customers’ convenience. To place your order online and pay for the bullion purchases you are able to use 1 of the 3 payment methods as follows:**\n\n-   Deulvery is now Free! Orders posted by Free Fully Insured Special delivery should arrive within 2-5 Days. (Orders over £100.00 only)\n-   We also have a Next Day delivery option which is £10. This insures your delivery is received by 1pm Next Day\n-   Lastly we offer a Direct Delivery Same Day delivery option which is £100 (this is only applicable to orders made within London and surrounding areas). To be eligible for Direct Same Day delivery the order must be made and paid in full by 12pm.\n\nAll our orders are sent out via Royal Mail and are safe, discreet and secure. (Gold Bank London is not to be held accountable for any delays in deliveries made by Royal Mail due to unforeseen events, Gold Bank London have no control in this",
+  "metadata": {
+    "title": "Our Delivery Options | Gold Bank",
+    "sourceURL": "https://goldbank.co.uk/our-delivery-options",
+    "url": "https://goldbank.co.uk/our-delivery-options",
+    "statusCode": 200,
+    "contentType": "text/html; charset=UTF-8",
+    "scrapedAt": "2026-09-19T05:34:57.246Z",
+    "scraper": "curl+turndown (scripts/scrape.ts)"
+  }
+}
