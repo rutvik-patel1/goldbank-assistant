@@ -57,15 +57,17 @@ async function readSse(
   }
 }
 
-export function useChatStream(initialTurns: UiTurn[] = []) {
+export function useChatStream(initialTurns: UiTurn[] = [], initialChatId?: string) {
   const [turns, setTurns] = useState<UiTurn[]>(initialTurns);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Held in state, not a ref: the share URL must be renderable. (An earlier ref
   // could not be returned without tripping react-hooks/refs, which left /c/[id]
   // unreachable — every conversation persisted and no way to find its link.)
-  const [chatId, setChatId] = useState<string | null>(null);
-  const chatId_ = useRef<string | null>(null);
+  // Seeded when resuming a saved conversation, so the next question appends to
+  // that session rather than silently starting a new one.
+  const [chatId, setChatId] = useState<string | null>(initialChatId ?? null);
+  const chatId_ = useRef<string | null>(initialChatId ?? null);
   // `pending` is state, so a second submit fired before React commits the
   // pending render would pass the guard and corrupt patchLast's "last turn"
   // target. A ref closes that window synchronously.

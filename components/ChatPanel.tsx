@@ -11,8 +11,16 @@ const SEEDS = [
   'Do I need ID to open an account?',
 ];
 
-export function ChatPanel({ initialTurns = [], readOnly = false }: { initialTurns?: UiTurn[]; readOnly?: boolean }) {
-  const { turns, pending, error, send, chatId } = useChatStream(initialTurns);
+export function ChatPanel({
+  initialTurns = [],
+  readOnly = false,
+  initialChatId,
+}: {
+  initialTurns?: UiTurn[];
+  readOnly?: boolean;
+  initialChatId?: string;
+}) {
+  const { turns, pending, error, send, chatId } = useChatStream(initialTurns, initialChatId);
   const [copied, setCopied] = useState(false);
   const [draft, setDraft] = useState('');
   const endRef = useRef<HTMLDivElement>(null);

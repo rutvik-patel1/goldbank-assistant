@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { nanoid } from 'nanoid';
 import { paths } from './config';
@@ -71,6 +71,36 @@ export function appendTurn(id: string, turn: ChatTurn): Promise<ChatSession | nu
       session.title = turn.content.slice(0, 70);
     }
     await mkdir(paths.chats, { recursive: true });
+    await writeFile(file(id), JSON.stringify(session, null, 2));
+    return session;
+  });
+}
+
+/** Remove a session. Returns false when the id is unknown or invalid. */
+export function deleteChat(id: string): Promise<boolean> {
+  return serialize(async () => {
+    try {
+      await rm(file(id));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Rename a session. Trimmed and capped to the same 70 chars appendTurn uses when
+ * deriving a title from the first question, so hand-written and derived titles
+ * cannot look different in the sidebar.
+ */
+export function renameChat(id: string, title: string): Promise<ChatSession | null> {
+  return serialize(async () => {
+    const clean = title.trim().slice(0, 70);
+    if (!clean) return null;
+    const session = await getChat(id);
+    if (!session) return null;
+    session.title = clean;
+    session.updatedAt = new Date().toISOString();
     await writeFile(file(id), JSON.stringify(session, null, 2));
     return session;
   });

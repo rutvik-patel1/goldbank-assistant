@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
-import Link from 'next/link';
 import { getChat } from '@/lib/chats';
 import { ChatPanel } from '@/components/ChatPanel';
+import { ChatShell } from '@/components/ChatShell';
 import type { UiTurn } from '@/lib/useChatStream';
 
 export const runtime = 'nodejs';
@@ -30,15 +30,16 @@ export default async function SharedChat({ params }: { params: Promise<{ id: str
   }));
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-lg font-semibold">{chat.title}</h1>
-        <Link href="/" className="text-sm text-gold hover:underline">Start your own →</Link>
+    <ChatShell activeId={chat.id}>
+      <div className="space-y-4">
+        <div className="flex items-baseline justify-between">
+          <h1 className="text-lg font-semibold">{chat.title}</h1>
+          <span className="text-xs text-muted">
+            Resumed · {new Date(chat.updatedAt).toLocaleString()}
+          </span>
+        </div>
+        <ChatPanel initialTurns={turns} initialChatId={chat.id} />
       </div>
-      <p className="text-xs text-muted">
-        Shared conversation · {new Date(chat.updatedAt).toLocaleString()}
-      </p>
-      <ChatPanel initialTurns={turns} readOnly />
-    </div>
+    </ChatShell>
   );
 }
