@@ -1,6 +1,7 @@
 # GoldBank Knowledge Base
 
-Ten pages scraped from https://goldbank.co.uk with Firecrawl (September 2026).
+Ten pages scraped from https://goldbank.co.uk with [Firecrawl](https://www.firecrawl.dev/)
+(September 2026).
 Each file is `{ "markdown": string, "metadata": { sourceURL, title, statusCode, ... } }`.
 
 One FAQ page plus nine legal pages: terms of service, privacy policy, cookies
