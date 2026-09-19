@@ -2,6 +2,9 @@
   "name": "gb-chatbot",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -21,7 +24,7 @@
     "@lancedb/lancedb": "^0.38.0",
     "@langchain/core": "^1.2.10",
     "@langchain/google-genai": "^2.3.1",
-    "apache-arrow": "^21.2.0",
+    "apache-arrow": "18.1.0",
     "gpt-tokenizer": "^4.0.0",
     "langchain": "^1.5.11",
     "mammoth": "^1.12.2",
@@ -36,7 +39,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/turndown": "^5.0.6",
