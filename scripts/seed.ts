@@ -20,8 +20,7 @@ async function main() {
   const target = args.find((a) => !a.startsWith('--')) ?? paths.corpus;
   console.log(`seeding from: ${target}`);
   console.log(`store: ${config.VECTOR_STORE}  model: ${config.CHAT_MODEL}  ` +
-              `embeddings: ${config.EMBEDDING_MODEL}@${config.EMBEDDING_DIMENSIONS}  ` +
-              `enrichment: ${config.ENRICHMENT}`);
+              `embeddings: ${config.EMBEDDING_MODEL}@${config.EMBEDDING_DIMENSIONS}`);
   await assertDimensions();
 
   const files = await filesToIngest(target);
@@ -55,22 +54,6 @@ async function main() {
   const store = await getStore();
   const docs = await listDocuments();
   console.log(`\nindexed ${ok} document(s), skipped ${skipped}, refused ${refusedCount}, failed ${failed}`);
-
-  // Enrichment coverage below 100% means some chunks were embedded without their
-  // hypothetical questions — retrieval still works but is measurably worse, and a
-  // plain re-run will SKIP them on content hash. Say so, and say how to repair it.
-  const ready = docs.filter((d) => d.status === 'ready');
-  const chunkTotal = ready.reduce((n, d) => n + d.chunkCount, 0);
-  const enrichedTotal = ready.reduce((n, d) => n + (d.enrichedCount ?? 0), 0);
-  const pct = chunkTotal ? Math.round((100 * enrichedTotal) / chunkTotal) : 100;
-  console.log(`enrichment coverage: ${enrichedTotal}/${chunkTotal} chunks (${pct}%)`);
-  if (config.ENRICHMENT === 'on' && enrichedTotal < chunkTotal) {
-    for (const d of ready.filter((x) => (x.enrichedCount ?? 0) < x.chunkCount)) {
-      console.log(`  WARNING ${d.title}: ${d.chunkCount - (d.enrichedCount ?? 0)} chunk(s) unenriched`);
-    }
-    console.log('  The enrichment cache is now warm. Re-run with --force to re-embed them:');
-    console.log('    npm run seed -- --force');
-  }
   console.log(`manifest: ${docs.length} record(s), ${docs.filter((d) => d.status === 'ready').length} ready`);
   console.log(`vectors in store: ${await store.count()}`);
   if (failed > 0) process.exit(1);

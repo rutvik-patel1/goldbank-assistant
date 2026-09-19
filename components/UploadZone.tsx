@@ -4,7 +4,7 @@ import { useRef, useState } from 'react';
 import { config } from '@/lib/config';
 import type { StageProgress } from '@/lib/useIngest';
 
-const STAGES = ['parsing', 'chunking', 'enriching', 'embedding', 'ready'];
+const STAGES = ['parsing', 'chunking', 'embedding', 'ready'];
 
 function StageBar({ p }: { p: StageProgress }) {
   if (p.stage === 'failed') {

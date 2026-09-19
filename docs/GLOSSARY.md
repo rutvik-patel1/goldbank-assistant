@@ -82,9 +82,7 @@ contact lines. Recovers 27 sections (11 `h2` + 16 `h3`) in the privacy policy.
 The chain of headings above a passage — `Terms of Service › Cancellation ›
 Your right to cancel`. Cheap context: it tells the embedder what a passage is
 about beyond its own words, tells the model where a quote came from, and gives
-a citation something readable to show. Its first element is the document title,
-which is why changing title derivation invalidates the
-[enrichment cache](#enrich).
+a citation something readable to show. Its first element is the document title.
 
 ### Chunk
 Cut a document into retrievable units — small enough to be a precise hit, large
@@ -103,22 +101,10 @@ atomic — the FAQ page yields 16, including one-word answers a
 minimum-length filter would have deleted), `clause` (a recovered section of
 legal text), `prose` (ordinary body text), `table` (never cut mid-row).
 
-### Enrich
-Generate a plain-language summary, 2–4 hypothetical customer questions and 3–8
-keywords per chunk, and embed *those* alongside the passage. This solves the
-vocabulary problem: *"Can I get my money back?"* barely overlaps a clause about
-statutory cancellation rights under the Financial Services Regulations 2004.
-**Retrieval sees the paraphrase; the model answering sees only the verbatim
-source** — enrichment never enters the prompt. Results are cached on disk keyed
-by `chat model + heading path + chunk text`; model output is parsed defensively
-and degrades to empty values rather than throwing; `ENRICHMENT=off` skips the
-stage at a measurable cost in retrieval quality.
-*Code:* `lib/pipeline/enrich.ts`
-
 ### Embed
 Turn each chunk's text into a vector, in batches of `EMBED_BATCH_SIZE` with
-retry-on-rate-limit. The embedded text is the [heading path](#heading-path),
-then the enrichment, then the verbatim passage. Two failure modes are explicit:
+retry-on-rate-limit. The embedded text is the [heading path](#heading-path)
+followed by the verbatim passage. Two failure modes are explicit:
 a model returning fewer dims than configured errors instead of storing a short
 vector, and the client library's habit of swallowing a per-batch 429 and
 substituting empty vectors is re-raised as the rate limit it is — otherwise a
@@ -140,9 +126,8 @@ with `--force`. This is what makes re-seeding an unchanged corpus free.
 
 ### Manifest
 The record of *what* is indexed, separate from the vectors: id, filename,
-title, source URL, content hash, status (`parsing` → `chunking` → `enriching` →
-`embedding` → `ready`, or `failed`), chunk count, enriched count, timestamps,
-error. A single JSON file at `data/documents.json`; all reads and writes go
+title, source URL, content hash, status (`parsing` → `chunking` → `embedding` →
+`ready`, or `failed`), chunk count, timestamps, error. A single JSON file at `data/documents.json`; all reads and writes go
 through a serialized queue so concurrent ingests can't lose a record.
 *Code:* `lib/manifest.ts`
 
@@ -292,7 +277,7 @@ it falls back to `characters / 4` if encoding throws.
 ### Temperature
 How much randomness the model is allowed when picking its next token. For an
 assistant quoting policy, variety is a liability. Answers stream at
-`CHAT_TEMPERATURE` (0.1); condensation and enrichment always run at exactly 0.
+`CHAT_TEMPERATURE` (0.1); condensation always runs at exactly 0.
 Chat clients are cached *keyed by temperature* — a single shared instance
 served whichever temperature was requested first, making the setting a dead
 tunable and letting ingest's 0 leak into every answer.
@@ -325,8 +310,8 @@ is required.
 
 | Variable | Default | What it controls |
 |---|---|---|
-| `GEMINI_CHAT_MODEL` | `gemini-3.1-flash-lite` | [Generate](#generate), [condense](#condense) and [enrich](#enrich). Part of the enrichment cache key. |
-| `CHAT_TEMPERATURE` | `0.1` | [Temperature](#temperature) for answers only; condense and enrich always use 0. |
+| `GEMINI_CHAT_MODEL` | `gemini-3.1-flash-lite` | [Generate](#generate) and [condense](#condense). |
+| `CHAT_TEMPERATURE` | `0.1` | [Temperature](#temperature) for answers only; condense always uses 0. |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Which model produces [vectors](#embedding-vector). Changing it invalidates the index. |
 | `EMBEDDING_DIMENSIONS` | `768` | [Dimensions](#dimensions) each vector is truncated to, then re-normalized. Changing it invalidates the index. |
 
@@ -335,7 +320,7 @@ is required.
 | Variable | Default | What it controls |
 |---|---|---|
 | `VECTOR_STORE` | `lancedb` | Which [adapter](#vector-store) is used; `json` swaps in a plain-file index. |
-| `DATA_DIR` | `./data` | Root for the index, [manifest](#manifest), chats, uploads and enrichment cache. |
+| `DATA_DIR` | `./data` | Root for the index, [manifest](#manifest), chats and uploads. |
 
 ### Chunking
 
@@ -343,15 +328,6 @@ is required.
 |---|---|---|
 | `MAX_CHUNK_TOKENS` | `450` | Sections above this split into overlapping parts ([chunk](#chunk)). |
 | `MAX_TOC_SCAN_LINES` | `60` | How far into a document the leading TOC list is harvested ([normalize](#normalize)). |
-
-### Enrichment
-
-| Variable | Default | What it controls |
-|---|---|---|
-| `ENRICHMENT` | `on` | `off` skips the [enrich](#enrich) stage entirely. |
-| `ENRICH_CONCURRENCY` | `4` | Enrichment requests in flight. |
-| `ENRICH_MAX_RETRIES` | `5` | Rate-limit retries, exponential backoff. |
-| `ENRICH_MAX_CHARS` | `6000` | Passage truncation before the enrichment call. |
 
 ### Embedding
 
@@ -397,13 +373,10 @@ Not environment-overridable — tuned against the real corpus.
 
 ### What invalidates what
 
-**The enrichment cache** is keyed on `chat model + heading path + chunk text`,
-and the heading path's first element is the document title. So changing
-`GEMINI_CHAT_MODEL`, title derivation, [structure recovery](#recover-structure)
-or [chunking](#chunk) forces a full re-enrichment — ~111 calls, which on a
-free-tier key (15/min) takes two or three `npm run seed -- --force` passes to
-converge. Each pass caches what succeeded; the seed's coverage line says when
-you are done.
+**A document** is skipped on re-seed while its [content hash](#content-hash) is
+unchanged, so changing title derivation,
+[structure recovery](#recover-structure) or [chunking](#chunk) only takes effect
+under `npm run seed -- --force`.
 
 **The index** is invalidated by `GEMINI_EMBEDDING_MODEL` or
 `EMBEDDING_DIMENSIONS`: delete `./data` and re-seed. The app refuses a
@@ -411,5 +384,6 @@ mismatched index rather than failing silently.
 
 **Tuning.** `MIN_SCORE` is the most consequential knob — too low and the bot
 answers out-of-scope questions, too high and it refuses ones the corpus
-answers. 0.55 was set with enrichment on; with `ENRICHMENT=off` scores shift
-down and the gate over-refuses.
+answers. 0.55 was calibrated when chunks were embedded with LLM-generated
+paraphrases alongside the passage; embedding the verbatim passage alone shifts
+scores down, so re-check it against real questions.

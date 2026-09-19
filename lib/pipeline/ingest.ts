@@ -6,7 +6,6 @@ import {
 } from '../manifest';
 import { chunkDocument } from './chunk';
 import { embedChunks } from './embed';
-import { enrichChunks } from './enrich';
 import { contentHash } from './normalize';
 import { parseFile } from './parse';
 
@@ -57,7 +56,7 @@ async function ingestDoc(
   const record: DocumentRecord = {
     id: documentId, filename, title,
     sourceUrl: doc.metadata.sourceUrl, contentHash: hash,
-    status: 'parsing', chunkCount: 0, enrichedCount: 0, createdAt: now, updatedAt: now,
+    status: 'parsing', chunkCount: 0, createdAt: now, updatedAt: now,
   };
   await upsertDocument(record);
 
@@ -68,22 +67,15 @@ async function ingestDoc(
     if (chunks.length === 0) throw new Error('document produced no chunks after parsing');
     emit({ type: 'status', documentId, stage: 'chunking', chunks: chunks.length });
 
-    emit({ type: 'status', documentId, stage: 'enriching', done: 0, total: chunks.length });
-    await patchDocument(documentId, { status: 'enriching', chunkCount: chunks.length });
-    const enriched = await enrichChunks(chunks, (done, total) =>
-      emit({ type: 'status', documentId, stage: 'enriching', done, total }),
-    );
-    const enrichedCount = enriched.filter((c) => c.enrichment).length;
-
     emit({ type: 'status', documentId, stage: 'embedding', done: 0, total: chunks.length });
-    await patchDocument(documentId, { status: 'embedding' });
-    const embedded = await embedChunks(enriched, (done, total) =>
+    await patchDocument(documentId, { status: 'embedding', chunkCount: chunks.length });
+    const embedded = await embedChunks(chunks, (done, total) =>
       emit({ type: 'status', documentId, stage: 'embedding', done, total }),
     );
 
     await store.upsert(embedded);
     await patchDocument(documentId, {
-      status: 'ready', chunkCount: embedded.length, enrichedCount, error: undefined,
+      status: 'ready', chunkCount: embedded.length, error: undefined,
     });
     const ms = Date.now() - started;
     emit({ type: 'done', documentId, chunks: embedded.length, ms });

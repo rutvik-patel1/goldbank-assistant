@@ -12,12 +12,6 @@ export interface ParsedDoc {
   };
 }
 
-export interface Enrichment {
-  summary: string;
-  hypotheticalQuestions: string[];
-  keywords: string[];
-}
-
 export interface Chunk {
   id: string;
   documentId: string;
@@ -31,7 +25,6 @@ export interface Chunk {
   partCount?: number;
   sourceUrl?: string;
   sourceTitle: string;
-  enrichment?: Enrichment;
 }
 
 export interface EmbeddedChunk extends Chunk {
@@ -43,7 +36,7 @@ export interface ScoredChunk extends Chunk {
 }
 
 export type DocumentStatus =
-  | 'parsing' | 'chunking' | 'enriching' | 'embedding' | 'ready' | 'failed';
+  | 'parsing' | 'chunking' | 'embedding' | 'ready' | 'failed';
 
 export interface DocumentRecord {
   id: string;
@@ -53,7 +46,6 @@ export interface DocumentRecord {
   contentHash: string;
   status: DocumentStatus;
   chunkCount: number;
-  enrichedCount: number;
   error?: string;
   createdAt: string;
   updatedAt: string;

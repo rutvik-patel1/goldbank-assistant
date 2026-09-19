@@ -12,7 +12,7 @@ INGEST (offline: npm run seed, or the /knowledge upload zone)
 
   file ──▶ parse ──▶ normalize ──▶ recover headings ──▶ chunk
                                                           │
-                       store ◀── embed ◀── enrich (LLM) ◀──┘
+                                   store ◀── embed ◀──────┘
 
 QUERY (online: POST /api/chat, streamed over SSE)
 
@@ -77,7 +77,6 @@ status event per stage so the seed script and the browser show live progress.
 | [Normalize](./GLOSSARY.md#normalize) | `pipeline/normalize.ts` | Strip boilerplate and duplicated titles, collapse whitespace, guarantee an `h1`, harvest the leading TOC anchor list, hash the content ([content hash](./GLOSSARY.md#content-hash)). |
 | [Recover structure](./GLOSSARY.md#recover-structure) | `pipeline/headings.ts` | Rebuild the heading tree from TOC anchors, numbered sections, and a Title-Case heuristic. |
 | [Chunk](./GLOSSARY.md#chunk) | `pipeline/chunk.ts` | Dispatch on [content shape](./GLOSSARY.md#chunk-kinds): `qa`, `clause`, `prose`, `table`. Oversized sections split with 15% overlap, recording `partIndex`/`partCount`. |
-| [Enrich](./GLOSSARY.md#enrich) | `pipeline/enrich.ts` | LLM summary, 2–4 hypothetical customer questions, keywords. Disk-cached; never throws on bad model output. |
 | [Embed](./GLOSSARY.md#embedding-vector) | `pipeline/embed.ts` | Batched and retried; vectors truncated to [`EMBEDDING_DIMENSIONS`](./GLOSSARY.md#dimensions) and re-normalized. |
 | [Store](./GLOSSARY.md#store) | `store/*` | [Upsert](./GLOSSARY.md#upsert) through the `VectorStore` port. |
 
@@ -86,12 +85,6 @@ markdown heading; their section titles are unmarked Title-Case paragraphs, so a
 stock splitter turns the 28 KB privacy policy into one blob cut at arbitrary
 offsets. The recovered tree yields 27 sections there (11 `h2` + 16 `h3`), and
 TOC anchors give real URL fragments for deep-linked citations.
-
-**Why enrichment exists.** The corpus is legalese; customers ask plain
-questions. *"Can I get my money back?"* barely overlaps a clause about
-statutory cancellation rights. The enrichment is embedded alongside the
-passage, so **retrieval sees the paraphrase; the model answering sees only the
-verbatim source.**
 
 **Failure semantics.** Identical content is skipped; changed content replaces
 the prior version outright (keyed on `sourceUrl`, else filename); a failed
@@ -118,8 +111,7 @@ One `POST /api/chat`, streamed over [SSE](./GLOSSARY.md#sse).
    mid-obligation must reach the model whole.
 5. **[Assemble context](./GLOSSARY.md#assemble-context)** (`rag/context.ts`) — dedupe, keep the strongest until
    the [`CONTEXT_TOKEN_BUDGET`](./GLOSSARY.md#context-budget) binds, then re-sort into reading order and number the
-   passages. Context is verbatim chunk text only; enrichment never enters the
-   prompt.
+   passages. Context is verbatim chunk text only.
 6. **[Generate](./GLOSSARY.md#generate)** (`rag/answer.ts`) — stream at
    [`CHAT_TEMPERATURE`](./GLOSSARY.md#temperature). The system
    prompt requires inline `[n]` citations and exact figures, forbids filling
@@ -147,16 +139,14 @@ Everything is in `lib/config.ts`; the variables below override it from
 
 | Variable | Default | Effect |
 |---|---|---|
-| `GEMINI_CHAT_MODEL` | `gemini-3.1-flash-lite` | Generation, condensation, enrichment |
-| `CHAT_TEMPERATURE` | `0.1` | Answers only — condensation and enrichment always run at 0 |
+| `GEMINI_CHAT_MODEL` | `gemini-3.1-flash-lite` | Generation and condensation |
+| `CHAT_TEMPERATURE` | `0.1` | Answers only — condensation always runs at 0 |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Vectors |
 | `EMBEDDING_DIMENSIONS` | `768` | Truncated from model output, then re-normalized |
 | `VECTOR_STORE` | `lancedb` | `json` swaps in a plain-file index |
-| `DATA_DIR` | `./data` | Root for index, manifest, chats, uploads, cache |
+| `DATA_DIR` | `./data` | Root for index, manifest, chats and uploads |
 | `MAX_CHUNK_TOKENS` | `450` | Sections above this split into overlapping parts |
 | `MAX_TOC_SCAN_LINES` | `60` | How far the leading TOC list is harvested |
-| `ENRICHMENT` | `on` | `off` skips the LLM enrichment stage |
-| `ENRICH_CONCURRENCY` / `ENRICH_MAX_RETRIES` / `ENRICH_MAX_CHARS` | `4` / `5` / `6000` | Enrichment throughput and passage truncation |
 | `EMBED_BATCH_SIZE` / `EMBED_CONCURRENCY` / `EMBED_MAX_RETRIES` | `64` / `2` / `5` | Embedding throughput |
 | `TOP_K` | `8` | Candidates retrieved |
 | `MIN_SCORE` | `0.55` | Below this, the bot refuses instead of guessing |
@@ -169,26 +159,26 @@ Everything is in `lib/config.ts`; the variables below override it from
 Chunk overlap, the heading heuristics, the supported extensions and the
 boilerplate patterns are in-code constants, tuned against the real corpus.
 
-**What invalidates what.** The enrichment cache is keyed on
-`chat model + heading path + chunk text`, so changing the chat model, title
-derivation, heading recovery or chunking forces a full re-enrichment — ~111
-calls, which on a free-tier key (15/min) takes two or three
-`npm run seed -- --force` passes to converge. Each pass caches what succeeded;
-the seed's coverage line says when you are done. Changing the embedding model
-or dimensions invalidates the index: delete `./data` and re-seed — the app
-refuses a mismatched index rather than failing silently.
+**What invalidates what.** A document is skipped on re-seed when its
+[content hash](./GLOSSARY.md#content-hash) is unchanged, so changes to title
+derivation, heading recovery or chunking need `npm run seed -- --force` to take
+effect. Changing the embedding model or dimensions invalidates the index:
+delete `./data` and re-seed — the app refuses a mismatched index rather than
+failing silently.
 
 **Tuning.** `MIN_SCORE` is the most consequential knob: too low and the bot
 answers out-of-scope questions, too high and it refuses ones the corpus
-answers. 0.55 was set with enrichment on; with `ENRICHMENT=off` scores shift
-down and the gate over-refuses. `TOP_K` is a floor, not a ceiling — sibling
-expansion can add more, and `CONTEXT_TOKEN_BUDGET` is the real limit.
+answers. 0.55 was calibrated when chunks were embedded with LLM-generated
+paraphrases alongside the passage; embedding the verbatim passage alone shifts
+scores down, so re-check it against real questions. `TOP_K` is a floor, not a
+ceiling — sibling expansion can add more, and `CONTEXT_TOKEN_BUDGET` is the
+real limit.
 
 ## Module map & HTTP surface
 
 | Concern | Module |
 |---|---|
-| Loaders, parse, normalize, headings, chunk, enrich, embed | `lib/loaders/*`, `lib/pipeline/*` |
+| Loaders, parse, normalize, headings, chunk, embed | `lib/loaders/*`, `lib/pipeline/*` |
 | [Vector store](./GLOSSARY.md#vector-store) port + LanceDB/JSON adapters | `lib/store/*` |
 | [Document manifest](./GLOSSARY.md#manifest) | `lib/manifest.ts` |
 | Condense, retrieve, context, answer | `lib/rag/*` |
@@ -220,5 +210,4 @@ data/
   documents.json           manifest: id, title, hash, status, chunk counts
   chats/                   persisted conversations
   uploads/                 files received through the upload zone
-  enrichment-cache/        one JSON file per chunk
 ```

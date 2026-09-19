@@ -30,7 +30,7 @@ export interface StoreRow {
   question: string;    // ''
   partIndex: number;   // -1 when not a split part
   partCount: number;   // -1
-  metaJson: string;    // { headingPath, enrichment }
+  metaJson: string;    // { headingPath }
 }
 
 export function toRow(c: EmbeddedChunk): StoreRow {
@@ -47,15 +47,12 @@ export function toRow(c: EmbeddedChunk): StoreRow {
     question: c.question ?? '',
     partIndex: c.partIndex ?? -1,
     partCount: c.partCount ?? -1,
-    metaJson: JSON.stringify({ headingPath: c.headingPath, enrichment: c.enrichment ?? null }),
+    metaJson: JSON.stringify({ headingPath: c.headingPath }),
   };
 }
 
 export function fromRow(r: StoreRow): EmbeddedChunk {
-  const meta = JSON.parse(r.metaJson) as {
-    headingPath: string[];
-    enrichment: Chunk['enrichment'] | null;
-  };
+  const meta = JSON.parse(r.metaJson) as { headingPath: string[] };
   return {
     id: r.id,
     documentId: r.documentId,
@@ -70,7 +67,6 @@ export function fromRow(r: StoreRow): EmbeddedChunk {
     partIndex: r.partIndex >= 0 ? r.partIndex : undefined,
     partCount: r.partCount >= 0 ? r.partCount : undefined,
     headingPath: meta.headingPath,
-    enrichment: meta.enrichment ?? undefined,
   };
 }
 

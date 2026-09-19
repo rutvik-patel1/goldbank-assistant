@@ -227,16 +227,7 @@ export function chunkDocument(doc: ParsedDoc, documentId: string): Chunk[] {
   return chunks;
 }
 
-/** Text actually sent to the embedding model: breadcrumb + enrichment + verbatim. */
+/** Text actually sent to the embedding model: breadcrumb + verbatim passage. */
 export function embeddingText(chunk: Chunk): string {
-  const parts = [chunk.headingPath.join(' › ')];
-  if (chunk.enrichment) {
-    if (chunk.enrichment.hypotheticalQuestions.length) {
-      parts.push(chunk.enrichment.hypotheticalQuestions.join(' '));
-    }
-    if (chunk.enrichment.summary) parts.push(chunk.enrichment.summary);
-    if (chunk.enrichment.keywords.length) parts.push(chunk.enrichment.keywords.join(', '));
-  }
-  parts.push(chunk.text);
-  return parts.join('\n\n');
+  return [chunk.headingPath.join(' › '), chunk.text].join('\n\n');
 }

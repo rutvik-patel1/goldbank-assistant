@@ -17,8 +17,7 @@
     "verify:headings": "tsx scripts/verify-headings.ts",
     "verify:chunk": "tsx scripts/verify-chunk.ts",
     "verify:store": "tsx scripts/verify-store.ts",
-    "verify:retrieve": "tsx --env-file-if-exists=.env.local scripts/verify-retrieve.ts",
-    "verify:enrich": "tsx --env-file-if-exists=.env.local scripts/verify-enrich.ts"
+    "verify:retrieve": "tsx --env-file-if-exists=.env.local scripts/verify-retrieve.ts"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.38.0",

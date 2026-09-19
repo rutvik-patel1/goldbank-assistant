@@ -5,7 +5,7 @@ import type { Citation, ScoredChunk } from '../types';
 /**
  * Order retrieved chunks the way a reader would meet them — grouped by
  * document, then by original position — and number them for citation.
- * Answer-time context is verbatim chunk text only; enrichment never appears.
+ * Answer-time context is verbatim chunk text only.
  */
 export function buildContext(chunks: ScoredChunk[]): { context: string; citations: Citation[] } {
   const seen = new Set<string>();

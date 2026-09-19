@@ -1,8 +1,8 @@
 # Gold Bank Assistant - RAG chatbot
 
 A Next.js application that takes a document from upload to a grounded, cited
-answer: parsing → structure recovery → chunking → LLM enrichment → embedding →
-retrieval → generation.
+answer: parsing → structure recovery → chunking → embedding → retrieval →
+generation.
 
 Built over Gold Bank's published FAQs and legal policies (a UK gold bullion
 dealer). The corpus ships with the repo, so a clone is a working demo.
@@ -28,7 +28,7 @@ rebuildable from the committed corpus with one command.
 npm install
 cp .env.example .env.local     # add your key from https://aistudio.google.com/apikey
 npm run check-models           # confirm the configured Gemini models exist
-npm run seed                   # ingest the bundled corpus (~2 min, enrichment)
+npm run seed                   # ingest the bundled corpus
 npm run dev                    # http://localhost:3000
 ```
 
@@ -44,7 +44,7 @@ fresh clone.
 | Document | What's in it |
 |---|---|
 | [Architecture](./docs/ARCHITECTURE.md) | Data sources and scraping, every ingestion stage, retrieval and generation, the full configuration table, the module map and HTTP surface |
-| [Glossary](./docs/GLOSSARY.md) | Every term of art — [RAG](./docs/GLOSSARY.md#rag), the pipeline keywords ([chunk](./docs/GLOSSARY.md#chunk), [enrich](./docs/GLOSSARY.md#enrich), [embed](./docs/GLOSSARY.md#embedding-vector)…), the retrieval machinery, and [every config variable](./docs/GLOSSARY.md#configuration-variables) |
+| [Glossary](./docs/GLOSSARY.md) | Every term of art — [RAG](./docs/GLOSSARY.md#rag), the pipeline keywords ([chunk](./docs/GLOSSARY.md#chunk), [embed](./docs/GLOSSARY.md#embedding-vector)…), the retrieval machinery, and [every config variable](./docs/GLOSSARY.md#configuration-variables) |
 | [Decisions](./docs/DECISIONS.md) | The choices taken during the build, in the order they were made |
 
 ## Data sources
@@ -68,7 +68,7 @@ The same pipeline backs the upload zone at `/knowledge`, which accepts `.json`,
 
 Ingest, offline: [parse](./docs/GLOSSARY.md#parse) → [normalize](./docs/GLOSSARY.md#normalize) →
 [recover headings](./docs/GLOSSARY.md#heading-path) →
-[chunk](./docs/GLOSSARY.md#chunk) → [enrich](./docs/GLOSSARY.md#enrich) →
+[chunk](./docs/GLOSSARY.md#chunk) →
 [embed](./docs/GLOSSARY.md#embedding-vector) →
 [store](./docs/GLOSSARY.md#vector-store). Query, per message:
 [condense](./docs/GLOSSARY.md#condense) → embed →
@@ -99,16 +99,15 @@ knobs you are most likely to touch:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `GEMINI_CHAT_MODEL` | `gemini-3.1-flash-lite` | Generation, condensation, enrichment |
+| `GEMINI_CHAT_MODEL` | `gemini-3.1-flash-lite` | Generation and condensation |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-001` | Vectors |
 | `EMBEDDING_DIMENSIONS` | `768` | Truncated and re-normalized |
 | `VECTOR_STORE` | `lancedb` | `json` swaps in a plain-file index |
-| `ENRICHMENT` | `on` | `off` skips the LLM enrichment stage |
 | `TOP_K` | `8` | Candidates retrieved |
 | `MIN_SCORE` | `0.55` | Below this, the bot refuses instead of guessing |
 
-The full table — chunking, enrichment, embedding, retrieval and upload limits —
-plus the rules for what invalidates the enrichment cache and the index, is in
+The full table — chunking, embedding, retrieval and upload limits — plus the
+rules for what invalidates the index, is in
 [Architecture](./docs/ARCHITECTURE.md#configuration).
 
 ## Verification
@@ -121,7 +120,6 @@ npm run check-models      # models exist and embeddings return 768 dims
 npm run verify:parse      # normalization over the real corpus
 npm run verify:headings   # named sections recovered from the legal pages
 npm run verify:chunk      # chunk kinds, token bounds, tables intact
-npm run verify:enrich     # summary/questions/keywords generated and cached (uses your API key)
 npm run verify:store      # both VectorStore adapters satisfy one contract
 npm run verify:retrieve   # five queries retrieve the right documents
 npm run smoke             # three golden questions, end to end

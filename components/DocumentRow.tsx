@@ -97,16 +97,6 @@ export function DocumentRow({
               </div>
               <p className="mt-2 whitespace-pre-wrap text-sm">{c.text.slice(0, 400)}
                 {c.text.length > 400 ? '…' : ''}</p>
-              {c.enrichment && (
-                <dl className="mt-2 space-y-1 border-t border-line pt-2 text-xs text-muted">
-                  <div><dt className="inline font-semibold">Summary: </dt>
-                    <dd className="inline">{c.enrichment.summary}</dd></div>
-                  <div><dt className="inline font-semibold">Also answers: </dt>
-                    <dd className="inline">{c.enrichment.hypotheticalQuestions.join(' · ')}</dd></div>
-                  <div><dt className="inline font-semibold">Keywords: </dt>
-                    <dd className="inline">{c.enrichment.keywords.join(', ')}</dd></div>
-                </dl>
-              )}
             </div>
           ))}
           {chunks?.length === 0 && <div className="text-sm text-muted">No chunks indexed.</div>}

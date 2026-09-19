@@ -29,12 +29,6 @@ export const config = {
   MAX_HEADING_UPPER_RATIO: 0.9,
   MAX_HEADING_WORDS: 14,
 
-  // Enrichment
-  ENRICHMENT: (process.env.ENRICHMENT ?? 'on') as 'on' | 'off',
-  ENRICH_CONCURRENCY: int('ENRICH_CONCURRENCY', 4),
-  ENRICH_MAX_RETRIES: int('ENRICH_MAX_RETRIES', 5),
-  ENRICH_MAX_CHARS: int('ENRICH_MAX_CHARS', 6000),
-
   // Embedding
   EMBED_BATCH_SIZE: int('EMBED_BATCH_SIZE', 64),
   EMBED_CONCURRENCY: int('EMBED_CONCURRENCY', 2),
@@ -71,6 +65,5 @@ export const paths = {
   manifest: `${config.DATA_DIR}/documents.json`,
   chats: `${config.DATA_DIR}/chats`,
   uploads: `${config.DATA_DIR}/uploads`,
-  enrichCache: `${config.DATA_DIR}/enrichment-cache`,
   corpus: 'knowledge-base/goldbank',
 };
